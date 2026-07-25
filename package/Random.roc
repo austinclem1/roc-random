@@ -136,8 +136,7 @@ Random := [].{
 	## ```
 	list : Generator(a), U64 -> Generator(List(a))
 	list = |generator, length| {
-		|state| {
-			var $state = state
+		|var $state| {
 			var $result = List.with_capacity(length)
 
 			for _ in 0..<length {
@@ -348,12 +347,11 @@ update = |state| {
 # Step the random state forward by n steps. The sequence has a period of
 # 2 to the 32 steps, and will wrap around after that.
 step_forward : Random.State, U32 -> Random.State
-step_forward = |state, delta| {
+step_forward = |state, var $delta| {
 	var $acc_mult = 1.U32
 	var $acc_plus = 0.U32
 	var $cur_mult = default_u32_update_multiplier
 	var $cur_plus = state.update_increment
-	var $delta = delta
 
 	while $delta > 0 {
 		if $delta % 2 == 1 {
@@ -703,9 +701,7 @@ TestRound : {
 }
 
 test_round_generator : Generator(TestRound)
-test_round_generator = |state| {
-	var $state = state
-
+test_round_generator = |var $state| {
 	{ value: u32_list, state: $state } = 
 		Random.list(Random.u32, 6)($state)
 
