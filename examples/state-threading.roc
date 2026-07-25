@@ -1,6 +1,6 @@
 app [main!] {
 	pf: platform "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/0.9/8GdFEvQYS3TeAZxKvTzCLVdQiomweGtXcdZkXNDEeABq.tar.zst",
-	rand: "https://github.com/kili-ilo/roc-random/releases/download/0.7.1/CQxsugKpN13qpgSGgsNBSA28dhjU5VskQVgEcbHmur5p.tar.zst",
+	rand: "https://github.com/kili-ilo/roc-random/releases/download/0.8.0/svv3by6TdnbfWMSJzMnMX7KgoDJaXXy8RqcKvD7jkJF.tar.zst",
 }
 
 import pf.Stdout
