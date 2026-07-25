@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build:
     name: Build release bundle
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       release_version: ${{ steps.validate.outputs.release_version }}
       docs_version: ${{ steps.validate.outputs.docs_version }}
@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -79,7 +79,7 @@ jobs:
         uses: roc-lang/release-package/actions/prepare-bundles@bb018c8c96b439b9545db6c792adc0549cf01ee1
         with:
           bundle_glob: dist/*.tar.zst
-          test_os_json: '["ubuntu-latest"]'
+          test_os_json: '["ubuntu-26.04"]'
 
       - name: Snapshot existing docs
         uses: roc-lang/release-package/actions/docs-snapshot@bb018c8c96b439b9545db6c792adc0549cf01ee1
@@ -107,7 +107,7 @@ jobs:
         run: tar -czf "dist/roc-random-docs-${{ steps.validate.outputs.docs_version }}.tar.gz" www
 
       - name: Upload release bundles
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-bundles
           path: .release/bundles/*
@@ -115,7 +115,7 @@ jobs:
           retention-days: 7
 
       - name: Upload release metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-metadata
           path: |
@@ -127,7 +127,7 @@ jobs:
           retention-days: 7
 
       - name: Upload release docs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-docs
           path: |
@@ -147,7 +147,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Roc
         uses: roc-lang/setup-roc@bd311e2fb815a3d2255f7ee14a922f0b736e020b
@@ -155,7 +155,7 @@ jobs:
           version: nightly-new-compiler
 
       - name: Download release bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-bundles
           path: .release/test-bundles
@@ -174,7 +174,7 @@ jobs:
       - build
       - test-bundles
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
 
@@ -185,19 +185,19 @@ jobs:
           fetch-depth: 0
 
       - name: Download release bundles
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-bundles
           path: .release/bundles
 
       - name: Download release metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-metadata
           path: .release
 
       - name: Download release docs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-docs
 
@@ -221,7 +221,7 @@ jobs:
       - build
       - publish-release
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write
@@ -233,7 +233,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Roc
         uses: roc-lang/setup-roc@bd311e2fb815a3d2255f7ee14a922f0b736e020b
@@ -241,27 +241,27 @@ jobs:
           version: nightly-new-compiler
 
       - name: Download release docs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-docs
 
       - name: Download release metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-metadata
           path: .release
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: www
 
       - name: Deploy Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
       - name: Update example package URLs
         env:
