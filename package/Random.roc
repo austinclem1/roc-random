@@ -149,20 +149,21 @@ Random := [].{
 		}
 	}
 
-	## Construct a `Generator` for 8-bit unsigned integers
-	## NOTE: We are just taking the bottom 8 bits of the generated `U32` value
-	## Some backing generators have worse statistical properties in the low-order bits
-	## and it would be wise to use the upper 8 bits instead, but according to the pcg
-	## paper (M.E. O'Neill) this backing generator has good statistical quality throughout
-	## all the bits (perhaps from the good high bits being rotated/shifted around etc)
+	## Given a `List` generate a shuffled version of that `List`
+	## A `Generator` for the full range of 8-bit unsigned integers
 	u8 : Generator(U8)
+	# NOTE: We are just taking the bottom 8 bits of the generated `U32` value
+	# Some backing generators have worse statistical properties in the low-order bits
+	# and it would be wise to use the upper 8 bits instead, but according to the pcg
+	# paper (M.E. O'Neill) this backing generator has good statistical quality throughout
+	# all the bits (perhaps from the good high bits being rotated/shifted around etc)
 	u8 = u32->map(U32.to_u8_wrap)
 
 	## Construct a `Generator` for 8-bit unsigned integers between two boundaries (inclusive)
 	bounded_u8 : U8, U8 -> Generator(U8)
 	bounded_u8 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u8_wrap)
 
-	## Construct a `Generator` for 8-bit signed integers
+	## A `Generator` for the full range of 8-bit signed integers
 	i8 : Generator(I8)
 	i8 = u32->map(U32.to_i8_wrap)
 
@@ -170,7 +171,7 @@ Random := [].{
 	bounded_i8 : I8, I8 -> Generator(I8)
 	bounded_i8 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i8_wrap)
 
-	## Construct a `Generator` for 16-bit unsigned integers
+	## A `Generator` for the full range of 16-bit unsigned integers
 	u16 : Generator(U16)
 	u16 = u32->map(U32.to_u16_wrap)
 
@@ -178,7 +179,7 @@ Random := [].{
 	bounded_u16 : U16, U16 -> Generator(U16)
 	bounded_u16 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u16_wrap)
 
-	## Construct a `Generator` for 16-bit signed integers
+	## A `Generator` for the full range of 16-bit signed integers
 	i16 : Generator(I16)
 	i16 = u32->map(U32.to_i16_wrap)
 
@@ -186,7 +187,7 @@ Random := [].{
 	bounded_i16 : I16, I16 -> Generator(I16)
 	bounded_i16 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i16_wrap)
 
-	## Construct a `Generator` for 32-bit unsigned integers
+	## A `Generator` for the full range of 32-bit unsigned integers
 	u32 : Generator(U32)
 	u32 = |state| {
 		value = state->permute()
@@ -199,7 +200,7 @@ Random := [].{
 	bounded_u32 : U32, U32 -> Generator(U32)
 	bounded_u32 = bounded_u32_helper
 
-	## Construct a `Generator` for 32-bit signed integers
+	## A `Generator` for the full range of 32-bit signed integers
 	i32 : Generator(I32)
 	i32 = u32->map(U32.to_i32_wrap)
 
@@ -210,18 +211,17 @@ Random := [].{
 
 # Helpers for the above constructors -------------------------------------------
 
-## Generate a random U32 in the range `[0, range)` returning the new state of
-## the backing PCG See [www.pcg-random.org/posts/bounded-rands.html](https://www.pcg-random.org/posts/bounded-rands.html)
-## Ported from PCG-C implementation. If a truly random generator was backing
-## this, technically there would be a very very slim chance of this while loop
-## never terminating, but because the backing PCG in this implimentation is well
-## distributed in its values over time, it will quickly find a value that
-## doesn't suffer from a bias toward lower numbers in the range.
-## The pathological value for `range` is slightly larger than `2**31` causing
-## almost half of generated candidates to be rejected. In practice, with small
-## `range` values, there is an extremely miniscule chance of generating even a
-## single value that needs to be rejected.
-##
+# Generate a random U32 in the range `[0, range)` returning the new state of
+# the backing PCG See [www.pcg-random.org/posts/bounded-rands.html](https://www.pcg-random.org/posts/bounded-rands.html)
+# Ported from PCG-C implementation. If a truly random generator was backing
+# this, technically there would be a very very slim chance of this while loop
+# never terminating, but because the backing PCG in this implementation is well
+# distributed in its values over time, it will quickly find a value that
+# doesn't suffer from a bias toward lower numbers in the range.
+# The pathological value for `range` is slightly larger than `2**31` causing
+# almost half of generated candidates to be rejected. In practice, with small
+# `range` values, there is an extremely miniscule chance of generating even a
+# single value that needs to be rejected.
 u32_exclusive_range_unbiased : State, int -> { value : U32, state : State } where [int.to_u32 : int -> U32]
 u32_exclusive_range_unbiased = |state, range| {
 	range_u32 = range.to_u32()
@@ -237,10 +237,14 @@ u32_exclusive_range_unbiased = |state, range| {
 	}
 }
 
+# convenience function that takes inclusive ranges of `U32`s or smaller ints
+# (with lower bound offset) and dispatches to unbiased exclusive range
+# generator
 bounded_u32_helper : int, int -> Generator(U32) where [int.to_u32 : int -> U32]
 bounded_u32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_u32(), y.to_u32())
 
+	range : U32
 	range = match (maximum - minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
@@ -256,9 +260,11 @@ bounded_u32_helper = |x, y| {
 	}
 }
 
+# similar to `bounded_u32_helper` but handles signed arithmetic for result
 bounded_i32_helper : int, int -> Generator(I32) where [int.to_i32 : int -> I32]
 bounded_i32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_i32(), y.to_i32())
+	range : U32
 	range = match I32.abs_diff(maximum, minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
@@ -339,8 +345,8 @@ update = |state| {
 	{ ..state, s: next_s }
 }
 
-## Step the random state forward by n steps. The sequence has a period of
-## 2 to the 32 steps, and will wrap around after that.
+# Step the random state forward by n steps. The sequence has a period of
+# 2 to the 32 steps, and will wrap around after that.
 step_forward : Random.State, U32 -> Random.State
 step_forward = |state, delta| {
 	var $acc_mult = 1.U32
@@ -370,6 +376,8 @@ step_forward = |state, delta| {
 	{ ..state, s: next_s }
 }
 
+# Step the random state backward by n steps. Will wrap around to the end of
+# the sequence when stepping backward from the "0th" state
 step_backward : Random.State, U32 -> Random.State
 step_backward = |state, delta| step_forward(state, negate_wrap_u32(delta))
 
