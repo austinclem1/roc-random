@@ -113,11 +113,20 @@ Random := [].{
 			{ value: combiner(first, second), state: state3 }
 		}
 
-	## Compose two `Generator`s into a single `Generator`.
+	## Create a `Generator` by chaining one `Generator` with a function that
+	## returns a new `Generator`
 	##
-	## This is an alias for `map2`; record-builder syntax calls `map2` directly.
-	chain : Generator(a), Generator(b), (a, b -> c) -> Generator(c)
-	chain = map2
+	## ```roc
+	## generate_random_amount_of_random_u8s =
+	##     Random.chain(Random.bounded_U64(1, 10), |count| Random.list(Random.u8, count))
+	## ```
+	chain : Generator(a), (a -> Generator(b)) -> Generator(b)
+	chain = |first_generator, func| {
+		|state| {
+			{ value, state: next_state } = first_generator(state)
+			func(value)(next_state)
+		}
+	}
 
 	## Generate a list of random values.
 	## ```
@@ -951,4 +960,17 @@ expect {
 		->step_backward(4)
 
 	same_state == state
+}
+
+expect {
+	state = Random.seed(0)
+	generator = Random.chain(
+		Random.static(3),
+		|count| {
+			Random.list(Random.static(4), count)
+		},
+	)
+
+	{ value, .. } = generator(state)
+	value == [4, 4, 4]
 }
