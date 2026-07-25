@@ -44,7 +44,7 @@ Random := [].{
 	## Construct an initial "seed" `State` for `Generator`s
 	seed : U32 -> State
 	seed = |initial_seed| {
-		default_sequence_id = U32.shift_right_zf_by(default_u32_update_increment, 1)
+		default_sequence_id = U32.shr_zf_wrap(default_u32_update_increment, 1)
 		seed_variant(initial_seed, default_sequence_id)
 	}
 
@@ -62,7 +62,7 @@ Random := [].{
 	seed_variant = |initial_seed, sequence_id| {
 		# ensure `update_increment` is odd, shifting `sequence_id` and discarding
 		# its most significant bit in the process
-		update_increment = sequence_id.shift_left_by(1).bitwise_or(1)
+		update_increment = sequence_id.shl_wrap(1).bitwise_or(1)
 
 		var $seed = State.({ s: 0, update_increment })
 		$seed = $seed->update()
@@ -232,7 +232,7 @@ bounded_u32_helper : int, int -> Generator(U32) where [int.to_u32 : int -> U32]
 bounded_u32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_u32(), y.to_u32())
 
-	range = match (maximum - minimum).add_try(1) {
+	range = match (maximum - minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
 		Err(Overflow) => return Random.u32
@@ -250,7 +250,7 @@ bounded_u32_helper = |x, y| {
 bounded_i32_helper : int, int -> Generator(I32) where [int.to_i32 : int -> I32]
 bounded_i32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_i32(), y.to_i32())
-	range = match I32.abs_diff(maximum, minimum).add_try(1) {
+	range = match I32.abs_diff(maximum, minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
 		Err(Overflow) => return Random.i32
@@ -302,7 +302,7 @@ pcg_rxs_m_xs = |state| {
 		shift_amount = state_bitcount - rxs_op_bitcount
 
 		state
-			.shift_right_zf_by(shift_amount)
+			.shr_zf_wrap(shift_amount)
 			.to_u8_wrap()
 	}
 
@@ -368,7 +368,7 @@ step_backward = |state, delta| step_forward(state, negate_wrap_u32(delta))
 
 xor_shift : U32, U8 -> U32
 xor_shift = |value, shift_amount| {
-	shifted = value.shift_right_zf_by(shift_amount)
+	shifted = value.shr_zf_wrap(shift_amount)
 	value.bitwise_xor(shifted)
 }
 
@@ -576,7 +576,7 @@ pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str = |n| {
 		digits = (0..<32).step_by(4).rev().map(
 			|shift| {
-				nibble = n.shift_right_by(shift).bitwise_and(0xF).to_u8_wrap()
+				nibble = n.shr_wrap(shift).bitwise_and(0xF).to_u8_wrap()
 				if nibble < 10 {
 					nibble + '0'
 				} else {
