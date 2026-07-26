@@ -293,6 +293,107 @@ Random := [].{
 			{ value, state: $state }
 		}
 	}
+
+	## `Generator` for an `F32` between two values excluding the high one
+	## It is generally recommended NOT to use this when your intention is to convert
+	## the floating point number to an integer due to potential rounding errors
+	## etc, prefer the `bounded_*` integer generators for those cases
+	f32 : F32, F32 -> Generator(F32)
+	f32 = |lo, hi| {
+		# This generator is aimed at a balance between performance/simplicity and
+		# statistical correctness. It will always produce a value less than the high
+		# bound (important if someone is converting this to an array index)
+		#
+		# we start with an equally distributed `F32` in [1.0 .. 2.0) then
+		# scale and offset it to the desired output range
+		#
+		# Keep in sync with `Random.f64`
+
+		width = hi - lo
+
+		input_is_valid = lo.is_finite()
+			and hi.is_finite()
+				and width.is_finite()
+					and width.is_positive()
+
+		expect input_is_valid
+
+		Random.u32->map(
+			|rand| {
+				if !input_is_valid return lo
+
+				# these bits hold just the exponent for the range [1.0 .. 2.0)
+				exponent_bits = F32.to_bits(1.0)
+
+				# random mantissa of 1.xxxxxx from lowest 23 bits of rand
+				mantissa_bits = U32.bitwise_and(rand, 0x007f_ffff)
+
+				float_bits = U32.bitwise_or(exponent_bits, mantissa_bits)
+
+				float_1_to_2 = F32.from_bits(float_bits)
+
+				# bring that float down to [0.0 .. 1.0)
+				ratio = float_1_to_2 - 1.0
+
+				result = lo + (width * ratio)
+
+				# in pathological rounding cases `result` can be too high
+				# if this happens, step down to the nearest valid value below `hi`
+				if result >= hi {
+					step_down_f32(hi)
+				} else {
+					result
+				}
+			},
+		)
+	}
+
+	## `Generator` for an `F64` between two values excluding the high one
+	## It is generally recommended NOT to use this when your intention is to convert
+	## the floating point number to an integer due to potential rounding errors
+	## etc, prefer the `bounded_*` integer generators for those cases
+	f64 : F64, F64 -> Generator(F64)
+	f64 = |lo, hi| {
+		# see commentary on `Random.f32` (these must be kept in sync!)
+
+		width = hi - lo
+
+		input_is_valid = lo.is_finite()
+			and hi.is_finite()
+				and width.is_finite()
+					and width.is_positive()
+
+		expect input_is_valid
+
+		Random.u64->map(
+			|rand| {
+				if !input_is_valid return lo
+
+				# these bits hold just the exponent for the range [1.0 .. 2.0)
+				exponent_bits = F64.to_bits(1.0)
+
+				# random mantissa of 1.xxxxxx from lowest 52 bits of rand
+				mantissa_bits = U64.bitwise_and(rand, 0x000f_ffff_ffff_ffff)
+
+				float_bits = U64.bitwise_or(exponent_bits, mantissa_bits)
+
+				float_1_to_2 = F64.from_bits(float_bits)
+
+				# bring that float down to [0.0 .. 1.0)
+				ratio = float_1_to_2 - 1.0
+
+				result = lo + (width * ratio)
+
+				# in pathological rounding cases `result` can be too high
+				# if this happens, step down to the nearest valid value below `hi`
+				if result >= hi {
+					step_down_f64(hi)
+				} else {
+					result
+				}
+			},
+		)
+	}
 }
 
 # Helpers for the above constructors -------------------------------------------
@@ -510,6 +611,50 @@ negate_wrap_u32 = |a| a.bitwise_not()->add_wrap_u32(1)
 
 negate_wrap_u64 : U64 -> U64
 negate_wrap_u64 = |a| a.bitwise_not()->add_wrap_u64(1)
+
+step_down_f32 : F32 -> F32
+step_down_f32 = |a| {
+	if a.is_nan() or a == -(F32.infinity) {
+		return a
+	}
+
+	bits = if a.is_zero() {
+		# for positive zero or negative zero, return highest negative subnormal
+		0x8000_0000
+	} else if a.is_positive() {
+		# positive magnitude shrinks towards 0.0
+		# also brings F32.infinity down to F32.highest
+		F32.to_bits(a) - 1
+	} else {
+		# negative magnitude grows away from 0.0
+		# also brings F32.lowest to negative F32.infinity
+		F32.to_bits(a) + 1
+	}
+
+	F32.from_bits(bits)
+}
+
+step_down_f64 : F64 -> F64
+step_down_f64 = |a| {
+	if a.is_nan() or a == -(F64.infinity) {
+		return a
+	}
+
+	bits = if a.is_zero() {
+		# for positive zero or negative zero, return highest negative subnormal
+		0x8000_0000_0000_0000
+	} else if a.is_positive() {
+		# positive magnitude shrinks towards 0.0
+		# also brings F64.infinity down to F64.highest
+		F64.to_bits(a) - 1
+	} else {
+		# negative magnitude grows away from 0.0
+		# also brings F64.lowest to negative F64.infinity
+		F64.to_bits(a) + 1
+	}
+
+	F64.from_bits(bits)
+}
 
 # Tests
 
@@ -1133,6 +1278,94 @@ expect {
 }
 
 expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = -999
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = 1000
+			hi = 1001
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = 5000
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -0.1
+			hi = 0.2
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = -999
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = 1000
+			hi = 1001
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = 5000
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -0.1
+			hi = 0.2
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
 	state = Random.seed(0)
 	generator = Random.chain(
 		Random.static(3),
@@ -1144,3 +1377,19 @@ expect {
 	{ value, .. } = generator(state)
 	value == [4, 4, 4]
 }
+
+expect step_down_f32(0.0) == F32.from_bits(0x8000_0000)
+expect step_down_f32(F32.infinity) == F32.highest
+expect step_down_f32(-(F32.infinity)) == -(F32.infinity)
+expect step_down_f32(F32.lowest) == -(F32.infinity)
+expect step_down_f32(F32.nan).is_nan()
+expect step_down_f32(1.0) < 1.0
+expect step_down_f32(-1.0) < -1.0
+
+expect step_down_f64(0.0) == F64.from_bits(0x8000_0000_0000_0000)
+expect step_down_f64(F64.infinity) == F64.highest
+expect step_down_f64(-(F64.infinity)) == -(F64.infinity)
+expect step_down_f64(F64.lowest) == -(F64.infinity)
+expect step_down_f64(F64.nan).is_nan()
+expect step_down_f64(1.0) < 1.0
+expect step_down_f64(-1.0) < -1.0
