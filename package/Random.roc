@@ -149,6 +149,31 @@ Random := [].{
 	}
 
 	## Given a `List` generate a shuffled version of that `List`
+	shuffle : List(a) -> Generator(List(a))
+	shuffle = |items| {
+		# TODO: does this create a longstanding reference to the unshuffled
+		# items potentially preventing mutation optimization at the
+		# `shuffle` usage site?
+		|var $state| {
+			if items.len() < 2 return { value: items, state: $state }
+
+			var $items = items
+			for i in (1..<items.len()).rev() {
+				{ value: choice_i, state: $state } = 
+					bounded_u64(0, i)($state)
+				$items = match $items.swap(i, choice_i) {
+					Ok(l) => l
+					Err(_) => {
+						crash "error in `Random.shuffle`"
+						[]
+					}
+				}
+			}
+
+			{ value: $items, state: $state }
+		}
+	}
+
 	## A `Generator` for the full range of 8-bit unsigned integers
 	u8 : Generator(U8)
 	# NOTE: We are just taking the bottom 8 bits of the generated `U32` value
@@ -669,6 +694,23 @@ expect {
 	True
 }
 
+# test shuffle
+expect {
+	items = (0..<100).collect()
+	expected_sum = items.sum()
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			this_seed = Random.seed(seed_num)
+			{ value: shuffled_items, .. } = 
+				Random.shuffle(items)(this_seed)
+			actual_sum = shuffled_items.sum()
+
+			actual_sum == expected_sum
+		},
+	)
+}
+
 # record builder and `Random.list` agree
 expect {
 	initial_state = Random.seed(33)
@@ -791,24 +833,28 @@ pcg_c_known_answer_test_generator = |state| {
 	{ value, state: test_rounds.state }
 }
 
-shuffled_deck_generator : Generator(List(U32))
-shuffled_deck_generator = |state| {
-	var $state = state
-	var $deck = (0..<52).collect()
+# only included for parity with PCG-C known answer tests
+shuffle_with_u32 : List(a) -> Generator(List(a))
+shuffle_with_u32 = |items| {
+	|var $state| {
+		if items.len() < 2 return { value: items, state: $state }
 
-	for i in (1..<$deck.len()).rev() {
-		{ value: choice_i, state: $state } = 
-			Random.bounded_u32(0, i.to_u32_wrap())($state)
-		$deck = match $deck.swap(i, choice_i.to_u64()) {
-			Ok(l) => l
-			Err(OutOfBounds) => {
-				crash "error in `shuffled_deck_generator`"
-				[]
+		var $items = items
+		for i in (1..<items.len()).rev() {
+			{ value: choice_i, state: $state } = 
+				Random.bounded_u32(0, i.to_u32_wrap())($state)
+			$items = match $items.swap(i, choice_i.to_u64()) {
+				Ok(l) => l
+				Err(OutOfBounds) => {
+					crash "error in `shuffle_with_u32`"
+					[]
+				}
 			}
 		}
 	}
 
-	{ value: $deck, state: $state }
+		{ value: $items, state: $state }
+	}
 }
 
 TestRound : {
@@ -835,8 +881,9 @@ test_round_generator = |var $state| {
 	{ value: rolls, state: $state } = 
 		Random.list(Random.bounded_u32(1, 6), 33)($state)
 
+	random_deck = shuffle_with_u32((0..<52).collect())
 	{ value: cards, state: $state } = 
-		shuffled_deck_generator($state)
+		random_deck($state)
 
 	{
 		value: { u32_list, u32_list_again, coins, rolls, cards },
