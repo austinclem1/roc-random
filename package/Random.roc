@@ -197,7 +197,7 @@ Random := [].{
 
 	## Construct a `Generator` for 32-bit unsigned integers between two boundaries (inclusive)
 	bounded_u32 : U32, U32 -> Generator(U32)
-	bounded_u32 = bounded_u32_helper
+	bounded_u32 = |x, y| bounded_u32_helper(x, y)
 
 	## A `Generator` for the full range of 32-bit signed integers
 	i32 : Generator(I32)
@@ -205,7 +205,69 @@ Random := [].{
 
 	## Construct a `Generator` for 32-bit signed integers between two boundaries (inclusive)
 	bounded_i32 : I32, I32 -> Generator(I32)
-	bounded_i32 = bounded_i32_helper
+	bounded_i32 = |x, y| bounded_i32_helper(x, y)
+
+	## A `Generator` for the full range of 64-bit unsigned integers
+	u64 : Generator(U64)
+	u64 = {
+		component_generator = {
+			hi: u32,
+			lo: u32,
+		}.Random
+
+		component_generator->map(
+			|{ hi, lo }| {
+				hi_shifted = hi.to_u64().shl_wrap(32)
+
+				(hi_shifted).bitwise_or(lo.to_u64())
+			},
+		)
+	}
+
+	## Construct a `Generator` for 64-bit unsigned integers between two boundaries (inclusive)
+	bounded_u64 : U64, U64 -> Generator(U64)
+	bounded_u64 = |x, y| {
+		(minimum, maximum) = sort(x, y)
+
+		range = match (maximum - minimum).plus_try(1) {
+			# we need full range `U64` generator
+			Err(Overflow) => return Random.u64
+			Ok(r) => r
+		}
+
+		|var $state| {
+			{ value: offset, state: $state } = 
+				u64_exclusive_range_unbiased(range)($state)
+			{ value: minimum + offset, state: $state }
+		}
+	}
+
+	## A `Generator` for the full range of 64-bit signed integers
+	i64 : Generator(I64)
+	i64 = u64->map(U64.to_i64_wrap)
+
+	## Construct a `Generator` for 64-bit signed integers between two boundaries (inclusive)
+	bounded_i64 : I64, I64 -> Generator(I64)
+	bounded_i64 = |x, y| {
+		(minimum, maximum) = sort(x, y)
+
+		range = match I64.abs_diff(maximum, minimum).plus_try(1) {
+			# we need full range `U64` generator
+			Err(Overflow) => return Random.i64
+			Ok(r) => r
+		}
+
+		|var $state| {
+			{ value: offset, state: $state } = 
+				u64_exclusive_range_unbiased(range)($state)
+
+			offset_i64 = offset.to_i64_wrap()
+
+			value = add_wrap_i64(minimum, offset_i64)
+
+			{ value, state: $state }
+		}
+	}
 }
 
 # Helpers for the above constructors -------------------------------------------
@@ -221,17 +283,31 @@ Random := [].{
 # almost half of generated candidates to be rejected. In practice, with small
 # `range` values, there is an extremely miniscule chance of generating even a
 # single value that needs to be rejected.
-u32_exclusive_range_unbiased : State, int -> { value : U32, state : State } where [int.to_u32 : int -> U32]
-u32_exclusive_range_unbiased = |state, range| {
-	range_u32 = range.to_u32()
-	threshold = negate_wrap_u32(range_u32) % range_u32
+u32_exclusive_range_unbiased : U32 -> Generator(U32)
+u32_exclusive_range_unbiased = |range| {
+	|var $state| {
+		threshold = negate_wrap_u32(range) % range
 
-	var $state = state
-	while True {
-		x = $state->permute()
-		$state = $state->update()
-		if x >= threshold {
-			return { value: x % range_u32, state: $state }
+		while True {
+			{ value: x, state: $state } = Random.u32($state)
+			if x >= threshold {
+				return { value: x % range, state: $state }
+			}
+		}
+	}
+}
+
+# see `u32_exclusive_range_unbiased` for commentary
+u64_exclusive_range_unbiased : U64 -> Generator(U64)
+u64_exclusive_range_unbiased = |range| {
+	|var $state| {
+		threshold = negate_wrap_u64(range) % range
+
+		while True {
+			{ value: x, state: $state } = Random.u64($state)
+			if x >= threshold {
+				return { value: x % range, state: $state }
+			}
 		}
 	}
 }
@@ -250,12 +326,12 @@ bounded_u32_helper = |x, y| {
 		Err(Overflow) => return Random.u32
 	}
 
-	|state| {
-		offset = state->u32_exclusive_range_unbiased(range)
+	|var $state| {
+		{ value: offset, state: $state } = u32_exclusive_range_unbiased(range)($state)
 
-		value = minimum + offset.value
+		value = minimum + offset
 
-		{ value, state: offset.state }
+		{ value, state: $state }
 	}
 }
 
@@ -270,12 +346,14 @@ bounded_i32_helper = |x, y| {
 		Err(Overflow) => return Random.i32
 	}
 
-	|state| {
-		offset = state->u32_exclusive_range_unbiased(range)
-		offset_i32 = offset.value.to_i32_wrap()
+	|var $state| {
+		{ value: offset, state: $state } = u32_exclusive_range_unbiased(range)($state)
+
+		offset_i32 = offset.to_i32_wrap()
+
 		value = add_wrap_i32(minimum, offset_i32)
 
-		{ value, state: offset.state }
+		{ value, state: $state }
 	}
 }
 
@@ -393,24 +471,43 @@ add_wrap_u32 = |a, b| (a.to_u64() + b.to_u64()).to_u32_wrap()
 add_wrap_i32 : I32, I32 -> I32
 add_wrap_i32 = |a, b| (a.to_i64() + b.to_i64()).to_i32_wrap()
 
+add_wrap_u64 : U64, U64 -> U64
+add_wrap_u64 = |a, b| (a.to_u128() + b.to_u128()).to_u64_wrap()
+
+add_wrap_i64 : I64, I64 -> I64
+add_wrap_i64 = |a, b| (a.to_i128() + b.to_i128()).to_i64_wrap()
+
 mul_wrap_u32 : U32, U32 -> U32
 mul_wrap_u32 = |a, b| (a.to_u64() * b.to_u64()).to_u32_wrap()
 
 negate_wrap_u32 : U32 -> U32
 negate_wrap_u32 = |a| a.bitwise_not()->add_wrap_u32(1)
 
+negate_wrap_u64 : U64 -> U64
+negate_wrap_u64 = |a| a.bitwise_not()->add_wrap_u64(1)
+
 # Tests
+
+test_passes_with_many_seeds : (U32 -> Bool) -> Bool
+test_passes_with_many_seeds = |test_predicate| {
+	var $all_passed = True
+
+	for seed_num in 0..<100 {
+		$all_passed = $all_passed and test_predicate(seed_num)
+	}
+
+	$all_passed
+}
 
 expect {
 	always_five = Random.static(5)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			rand_generation = Random.step(this_seed, always_five)
 
-			all_passed and rand_generation.value == 5
+			rand_generation.value == 5
 		},
 	)
 }
@@ -418,17 +515,15 @@ expect {
 expect {
 	doubled_int = Random.bounded_i32(-100, 100)->Random.map(|i| i * 2)
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			rand_generation = Random.step(this_seed, Random.bounded_i32(-100, 100))
 			doubled_rand_generation = Random.step(this_seed, doubled_int)
 			rand_int = rand_generation.value
 			doubled_rand_int = doubled_rand_generation.value
 
-			all_passed and rand_int * 2 == doubled_rand_int
+			rand_int * 2 == doubled_rand_int
 		},
 	)
 }
@@ -437,14 +532,13 @@ expect {
 	color_component_gen = Random.bounded_i32(0, 255)
 	rgb_generator = { r: color_component_gen, g: color_component_gen, b: color_component_gen }.Random
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			{ value: color, .. } = Random.step(this_seed, rgb_generator)
 			{ r, g, b } = color
-			all_passed and r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255
+
+			r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255
 		},
 	)
 }
@@ -458,6 +552,8 @@ expect {
 		d: Random.i16,
 		e: Random.u32,
 		f: Random.i32,
+		g: Random.u64,
+		h: Random.i64,
 	}.Random
 
 	test_seed = Random.seed(123)
@@ -467,108 +563,98 @@ expect {
 	True
 }
 
-expect {
-	ascending_bounded = Random.bounded_u8(90, 200)
-	descending_bounded = Random.bounded_u8(200, 90)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 90 and value_a <= 200 and value_a == value_b
-		},
-	)
+# bounds tests with random bounds
+
+make_bounded_generator_test = |bound_generator, make_bounded_generator| {
+	|seed_num| {
+		initial_seed = Random.seed(seed_num)
+
+		bound_a = Random.step(initial_seed, bound_generator)
+		bound_b = Random.step(bound_a.state, bound_generator)
+
+		(lo, hi) = sort(bound_a.value, bound_b.value)
+
+		generator = make_bounded_generator(lo, hi)
+		generator_flipped = make_bounded_generator(hi, lo)
+
+		{ value: value_a, .. } = Random.step(bound_b.state, generator)
+		{ value: value_b, .. } = Random.step(bound_b.state, generator_flipped)
+
+		value_a >= lo and value_a <= hi and value_a == value_b
+	}
 }
 
 expect {
-	ascending_bounded = Random.bounded_u16(200, 33000)
-	descending_bounded = Random.bounded_u16(33000, 200)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 200 and value_a <= 33000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u8, Random.bounded_u8)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_u32(20_000_000, 30_000_000)
-	descending_bounded = Random.bounded_u32(30_000_000, 20_000_000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 20_000_000 and value_a <= 30_000_000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u16, Random.bounded_u16)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i8(-100, 120)
-	descending_bounded = Random.bounded_i8(120, -100)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -100 and value_a <= 120 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u32, Random.bounded_u32)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i16(-1000, 1000)
-	descending_bounded = Random.bounded_i16(1000, -1000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -1000 and value_a <= 1000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u64, Random.bounded_u64)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i32(-40_000_000, 70_000_000)
-	descending_bounded = Random.bounded_i32(70_000_000, -40_000_000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -40_000_000 and value_a <= 70_000_000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.i8, Random.bounded_i8)
+	test_passes_with_many_seeds(test)
 }
+
+expect {
+	test = make_bounded_generator_test(Random.i16, Random.bounded_i16)
+	test_passes_with_many_seeds(test)
+}
+
+expect {
+	test = make_bounded_generator_test(Random.i32, Random.bounded_i32)
+	test_passes_with_many_seeds(test)
+}
+
+expect {
+	test = make_bounded_generator_test(Random.i64, Random.bounded_i64)
+	test_passes_with_many_seeds(test)
+}
+
+# bounds tests with single number range
 
 expect {
 	u32_generator = Random.bounded_u32(42, 42)
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), u32_generator).value
+			actual == 42
+		},
+	)
+}
+
+expect {
 	i32_generator = Random.bounded_i32(-7, -7)
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			u32_actual = Random.step(Random.seed(seed_num), u32_generator).value
-			i32_actual = Random.step(Random.seed(seed_num), i32_generator).value
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), i32_generator).value
+			actual == -7
+		},
+	)
+}
 
-			all_passed and u32_actual == 42 and i32_actual == -7
+expect {
+	u32_generator = Random.bounded_u32(0, 0)
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), u32_generator).value
+			actual == 0
 		},
 	)
 }
@@ -581,6 +667,39 @@ expect {
 	_ = Random.bounded_u32(U32.lowest, U32.highest - 1)(test_seed)
 	_ = Random.bounded_u32(U32.highest, U32.lowest)(test_seed)
 	True
+}
+
+# record builder and `Random.list` agree
+expect {
+	initial_state = Random.seed(33)
+
+	record_generator = {
+		n1: Random.u32,
+		n2: Random.u32,
+		n3: Random.u32,
+		n4: Random.u32,
+		n5: Random.u32,
+		n6: Random.u32,
+	}.Random
+
+	record = record_generator(initial_state)
+	{ n1, n2, n3, n4, n5, n6 } = record.value
+
+	list = Random.list(Random.u32, 6)(initial_state)
+
+	[n1, n2, n3, n4, n5, n6] == list.value and record.state == list.state
+}
+
+# Random.list same as multiple single value generators
+expect {
+	initial_state = Random.seed(5)
+
+	n1 = Random.u32(initial_state)
+	n2 = Random.u32(n1.state)
+
+	n_list_again = Random.list(Random.u32, 2)(initial_state)
+
+	n2.state == n_list_again.state
 }
 
 # "Known Answer Test" code ported from PCG C test from https://github.com/imneme/pcg-c
