@@ -394,6 +394,97 @@ Random := [].{
 			},
 		)
 	}
+
+	## Creates a `Generator` that randomly chooses from a series of items.
+	## The first item is given explicitly as the first argument to ensure that
+	## there's always at least one item to choose from. See `Random.choice_try`
+	## for an alternative that checks for an empty `List`.
+	choice : a, List(a) -> Generator(a)
+	choice = |first, rest| {
+		num_choices = 1 + rest.len()
+
+		# subtract 1 because bounded_u64 uses an inclusive range
+		choice_index_generator = Random.bounded_u64(0, num_choices - 1)
+
+		choice_index_generator->map(
+			|choice_index| {
+				if choice_index == 0 {
+					first
+				} else {
+					rest_index = choice_index - 1
+					match rest.get(rest_index) {
+						Ok(item) => item
+						Err(OutOfBounds) => {
+							crash "Random.choice: index out of bounds"
+						}
+					}
+				}
+			},
+		)
+	}
+
+	## Creates a `Generator` that randomly chooses an item from a `List`.
+	## Returns `Err(ListWasEmpty)` upon construction if given an empty `List`.
+	## See `Random.choice` for a version that cannot return an error.
+	choice_try : List(a) -> Try(Generator(a), [ListWasEmpty])
+	choice_try = |items| {
+		match items {
+			[] => Err(ListWasEmpty)
+			[first, .. as rest] => Ok(choice(first, rest))
+		}
+	}
+
+	## Creates a `Generator` that randomly chooses from a series of items with
+	## an associated weight. Higher weight indicates higher a higher probability
+	## of selection. The weights don't need to add up to any particular value,
+	## probability is relative to the total sum of given weights.
+	## The first item is given explicitly as the first argument to ensure that
+	## there's always at least one item to choose from.
+	## See `Random.choice_weighted_try` for an alternative that checks for an
+	## empty `List`
+	choice_weighted : (a, F64), List((a, F64)) -> Generator(a)
+	choice_weighted = |first, rest| {
+		validate_weight = |weight| {
+			expect weight.is_finite() and weight >= 0.0
+			if (weight.is_finite()) weight.abs() else 0.0
+		}
+
+		# TODO: using noisy concat version due to current compiler bug
+		all_choices_iter = 
+			(Iter.single(first).concat(rest.iter()))
+				.map(|(item, weight)| (item, validate_weight(weight)))
+
+		total_weight = all_choices_iter.fold(0.0, |sum, (_, weight)| sum + weight)
+
+		Random.f64(0.0, total_weight)->map(
+			|rand| {
+				var $cumulative_sum = 0.0
+
+				for (item, weight) in all_choices_iter {
+					$cumulative_sum = $cumulative_sum + weight
+					if rand < $cumulative_sum return item
+				}
+
+				# we can only get here due to rounding error, just return last item
+				last_choice = rest.last().ok_or(first)
+				last_choice.0
+			},
+		)
+	}
+
+	## Creates a `Generator` that randomly chooses from a series of items with
+	## an associated weight. Higher weight indicates higher a higher probability
+	## of selection. The weights don't need to add up to any particular value,
+	## probability is relative to the total sum of given weights.
+	## Returns `Err(ListWasEmpty)` upon construction if given an empty `List`.
+	## See `Random.choice_weighted` for a version that cannot return an error.
+	choice_weighted_try : List((a, F64)) -> Try(Generator(a), [ListWasEmpty])
+	choice_weighted_try = |items| {
+		match items {
+			[] => Err(ListWasEmpty)
+			[first, .. as rest] => Ok(choice_weighted(first, rest))
+		}
+	}
 }
 
 # Helpers for the above constructors -------------------------------------------
@@ -1363,6 +1454,74 @@ expect {
 			value >= lo and value < hi
 		},
 	)
+}
+
+# Random.choice all choices eventually encountered
+expect {
+	choice_generator = Random.choice(A, [B, C])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_try all choices eventually encountered
+expect {
+	choice_generator = Random.choice_try([A, B, C])?
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_weighted with very unlikely choice
+# Not a fool-proof test but if it fails you should probably go buy a lottery ticket
+expect {
+	choice_generator = Random.choice_weighted((A, 0.0000000001), [(B, 1000000000), (C, 1000000000)])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	$encountered_choices.contains(A) == False and
+		$encountered_choices.contains(B) and
+			$encountered_choices.contains(C)
+}
+
+# Random.choice_weighted with even weights
+expect {
+	choice_generator = Random.choice_weighted((A, 1), [(B, 1), (C, 1)])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_weighted_try with even weights
+expect {
+	choice_generator = Random.choice_weighted_try([(A, 1), (B, 1), (C, 1)])?
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
 }
 
 expect {
