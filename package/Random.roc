@@ -435,7 +435,7 @@ Random := [].{
 	}
 
 	## Creates a `Generator` that randomly chooses from a series of items with
-	## an associated weight. Higher weight indicates higher a higher probability
+	## an associated weight. Higher weight indicates a higher probability
 	## of selection. The weights don't need to add up to any particular value,
 	## probability is relative to the total sum of given weights.
 	## The first item is given explicitly as the first argument to ensure that
