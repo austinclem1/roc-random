@@ -752,7 +752,7 @@ pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str = |n| {
 		digits = (0..<32).step_by(4).rev().map(
 			|shift| {
-				nibble = n.shr_wrap(shift).bitwise_and(0xF).to_u8_wrap()
+				nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
 				if nibble < 10 {
 					nibble + '0'
 				} else {
