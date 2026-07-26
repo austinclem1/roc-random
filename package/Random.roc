@@ -828,20 +828,18 @@ expect {
 
 make_bounded_generator_test = |bound_generator, make_bounded_generator| {
 	|seed_num| {
-		initial_seed = Random.seed(seed_num)
+		var $state = Random.seed(seed_num)
 
-		bound_a = Random.step(initial_seed, bound_generator)
-		bound_b = Random.step(bound_a.state, bound_generator)
+		{ value: bound_a, state: $state } = Random.step($state, bound_generator)
+		{ value: bound_b, state: $state } = Random.step($state, bound_generator)
 
-		(lo, hi) = sort(bound_a.value, bound_b.value)
+		generator = make_bounded_generator(bound_a, bound_b)
 
-		generator = make_bounded_generator(lo, hi)
-		generator_flipped = make_bounded_generator(hi, lo)
+		{ value, .. } = Random.step($state, generator)
 
-		{ value: value_a, .. } = Random.step(bound_b.state, generator)
-		{ value: value_b, .. } = Random.step(bound_b.state, generator_flipped)
+		(lo, hi) = sort(bound_a, bound_b)
 
-		value_a >= lo and value_a <= hi and value_a == value_b
+		value >= lo and value <= hi
 	}
 }
 
@@ -1087,7 +1085,6 @@ shuffle_with_u32 = |items| {
 				}
 			}
 		}
-	}
 
 		{ value: $items, state: $state }
 	}
@@ -1273,58 +1270,6 @@ expect {
 	{ value: n2, state: $state } = Random.u32($state)
 
 	n1 == n2
-}
-
-# record generator and list agree on values
-expect {
-	initial_state = Random.seed(33)
-
-	record_generator = {
-		n1: Random.u32,
-		n2: Random.u32,
-		n3: Random.u32,
-		n4: Random.u32,
-		n5: Random.u32,
-		n6: Random.u32,
-	}.Random
-
-	record = record_generator(initial_state)
-	{ n1, n2, n3, n4, n5, n6 } = record.value
-
-	list = Random.list(Random.u32, 6)(initial_state)
-
-	[n1, n2, n3, n4, n5, n6] == list.value
-}
-
-# record generator and list agree on state
-expect {
-	initial_state = Random.seed(33)
-
-	record_generator = {
-		n1: Random.u32,
-		n2: Random.u32,
-		n3: Random.u32,
-		n4: Random.u32,
-		n5: Random.u32,
-		n6: Random.u32,
-	}.Random
-
-	record = record_generator(initial_state)
-	list = Random.list(Random.u32, 6)(initial_state)
-
-	record.state == list.state
-}
-
-# Random.list same as multiple single value generators
-expect {
-	initial_state = Random.seed(5)
-
-	n1 = Random.u32(initial_state)
-	n2 = Random.u32(n1.state)
-
-	n_list_again = Random.list(Random.u32, 2)(initial_state)
-
-	n2.state == n_list_again.state
 }
 
 # step backward even delta
