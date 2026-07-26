@@ -358,7 +358,7 @@ bounded_i32_helper = |x, y| {
 }
 
 sort = |x, y|
-	if x < y {
+	if x <= y {
 		(x, y)
 	} else {
 		(y, x)
