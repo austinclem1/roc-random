@@ -174,6 +174,10 @@ Random := [].{
 		}
 	}
 
+	## A `Generator` that generates `Bool.True` or `Bool.False` with equal probabilty
+	bool : Generator(Bool)
+	bool = u32->map(U32.is_odd)
+
 	## A `Generator` for the full range of 8-bit unsigned integers
 	u8 : Generator(U8)
 	# NOTE: We are just taking the bottom 8 bits of the generated `U32` value
@@ -807,14 +811,15 @@ expect {
 # sanity check for non-bounded generators, checking for overflows/crashes etc
 expect {
 	unbounded_values = {
-		a: Random.u8,
-		b: Random.i8,
-		c: Random.u16,
-		d: Random.i16,
-		e: Random.u32,
-		f: Random.i32,
-		g: Random.u64,
-		h: Random.i64,
+		bool: Random.bool,
+		u8: Random.u8,
+		i8: Random.i8,
+		u16: Random.u16,
+		i16: Random.i16,
+		u32: Random.u32,
+		i32: Random.i32,
+		u64: Random.u64,
+		i64: Random.i64,
 	}.Random
 
 	test_seed = Random.seed(123)
