@@ -458,7 +458,7 @@ Random := [].{
 			(Iter.single(first).concat(rest.iter()))
 				.map(|(item, weight)| (item, validate_weight(weight)))
 
-		total_weight = all_choices_iter.fold(0.0, |sum, (_, weight)| sum + weight)
+		total_weight = all_choices_iter.map(|(_, weight)| weight).sum()
 
 		Random.f64(0.0, total_weight)->map(
 			|rand| {
