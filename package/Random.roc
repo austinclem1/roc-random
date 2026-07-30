@@ -159,7 +159,7 @@ Random := [].{
 
 			var $items = items
 			for i in (1..<items.len()).rev() {
-				{ value: choice_i, state: $state } = 
+				{ value: choice_i, state: $state } =
 					bounded_u64(0, i)($state)
 				$items = match $items.swap(i, choice_i) {
 					Ok(l) => l
@@ -265,7 +265,7 @@ Random := [].{
 		}
 
 		|var $state| {
-			{ value: offset, state: $state } = 
+			{ value: offset, state: $state } =
 				u64_exclusive_range_unbiased(range)($state)
 			{ value: minimum + offset, state: $state }
 		}
@@ -287,7 +287,7 @@ Random := [].{
 		}
 
 		|var $state| {
-			{ value: offset, state: $state } = 
+			{ value: offset, state: $state } =
 				u64_exclusive_range_unbiased(range)($state)
 
 			offset_i64 = offset.to_i64_wrap()
@@ -454,7 +454,7 @@ Random := [].{
 		}
 
 		# TODO: using noisy concat version due to current compiler bug
-		all_choices_iter = 
+		all_choices_iter =
 			(Iter.single(first).concat(rest.iter()))
 				.map(|(item, weight)| (item, validate_weight(weight)))
 
@@ -655,18 +655,18 @@ step_forward = |state, var $delta| {
 	while $delta > 0 {
 		if $delta % 2 == 1 {
 			$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
-			$acc_plus = 
+			$acc_plus =
 				mul_wrap_u32($acc_plus, $cur_mult)
 					->add_wrap_u32($cur_plus)
 		}
-		$cur_plus = 
+		$cur_plus =
 			add_wrap_u32($cur_mult, 1)
 				->mul_wrap_u32($cur_plus)
 		$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
 		$delta = $delta // 2
 	}
 
-	next_s = 
+	next_s =
 		mul_wrap_u32(state.s, $acc_mult)
 			->add_wrap_u32($acc_plus)
 
@@ -941,7 +941,7 @@ expect {
 	test_passes_with_many_seeds(
 		|seed_num| {
 			this_seed = Random.seed(seed_num)
-			{ value: shuffled_items, .. } = 
+			{ value: shuffled_items, .. } =
 				Random.shuffle(items)(this_seed)
 			actual_sum = shuffled_items.sum()
 
@@ -1063,10 +1063,10 @@ pcg_c_known_answer_test_generator = |state| {
 		\\  Cards:${cards_str}
 	}
 
-	test_rounds = 
+	test_rounds =
 		Random.list(test_round_generator, 5)(state)
 
-	value = 
+	value =
 		test_rounds.value.map_with_index(test_round_to_str)->Str.join_with("\n\n")
 
 	{ value, state: test_rounds.state }
@@ -1080,7 +1080,7 @@ shuffle_with_u32 = |items| {
 
 		var $items = items
 		for i in (1..<items.len()).rev() {
-			{ value: choice_i, state: $state } = 
+			{ value: choice_i, state: $state } =
 				Random.bounded_u32(0, i.to_u32_wrap())($state)
 			$items = match $items.swap(i, choice_i.to_u64()) {
 				Ok(l) => l
@@ -1105,22 +1105,22 @@ TestRound : {
 
 test_round_generator : Generator(TestRound)
 test_round_generator = |var $state| {
-	{ value: u32_list, state: $state } = 
+	{ value: u32_list, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
 	$state = $state->step_backward(6)
 
-	{ value: u32_list_again, state: $state } = 
+	{ value: u32_list_again, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
-	{ value: coins, state: $state } = 
+	{ value: coins, state: $state } =
 		Random.list(Random.bounded_u32(0, 1), 65)($state)
 
-	{ value: rolls, state: $state } = 
+	{ value: rolls, state: $state } =
 		Random.list(Random.bounded_u32(1, 6), 33)($state)
 
 	random_deck = shuffle_with_u32((0..<52).collect())
-	{ value: cards, state: $state } = 
+	{ value: cards, state: $state } =
 		random_deck($state)
 
 	{
@@ -1135,7 +1135,7 @@ expect {
 
 	actual = pcg_c_known_answer_test_generator(state)
 
-	expected = 
+	expected =
 		\\Round 1:
 		\\  32bit: 0x256b5357 0xa5efad32 0x170b7830 0x334a5b22 0x3de5c680 0x9b47b7b3
 		\\  Again: 0x256b5357 0xa5efad32 0x170b7830 0x334a5b22 0x3de5c680 0x9b47b7b3
@@ -1190,7 +1190,7 @@ expect {
 
 	actual = pcg_c_known_answer_test_generator(state)
 
-	expected = 
+	expected =
 		\\Round 1:
 		\\  32bit: 0xf84b622d 0xdc1e5bb4 0x74fb8ac1 0xb3bbf8de 0x9cf62074 0x2d2f5e33
 		\\  Again: 0xf84b622d 0xdc1e5bb4 0x74fb8ac1 0xb3bbf8de 0x9cf62074 0x2d2f5e33
