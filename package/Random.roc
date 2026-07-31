@@ -65,9 +65,9 @@ Random := [].{
 		update_increment = sequence_id.shl_wrap(1).bitwise_or(1)
 
 		var $seed = State.({ s: 0, update_increment })
-		$seed = $seed->update()
+		$seed = $seed |> update
 		$seed = { ..$seed, s: $seed.s + initial_seed }
-		$seed->update()
+		$seed |> update
 	}
 
 	## Generate a `Generation` from a state
@@ -176,7 +176,7 @@ Random := [].{
 
 	## A `Generator` that generates `Bool.True` or `Bool.False` with equal probabilty
 	bool : Generator(Bool)
-	bool = u32->map(U32.is_odd)
+	bool = u32 |> map(U32.is_odd)
 
 	## A `Generator` for the full range of 8-bit unsigned integers
 	u8 : Generator(U8)
@@ -185,41 +185,41 @@ Random := [].{
 	# and it would be wise to use the upper 8 bits instead, but according to the pcg
 	# paper (M.E. O'Neill) this backing generator has good statistical quality throughout
 	# all the bits (perhaps from the good high bits being rotated/shifted around etc)
-	u8 = u32->map(U32.to_u8_wrap)
+	u8 = u32 |> map(U32.to_u8_wrap)
 
 	## Construct a `Generator` for 8-bit unsigned integers between two boundaries (inclusive)
 	bounded_u8 : U8, U8 -> Generator(U8)
-	bounded_u8 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u8_wrap)
+	bounded_u8 = |x, y| bounded_u32_helper(x, y) |> map(U32.to_u8_wrap)
 
 	## A `Generator` for the full range of 8-bit signed integers
 	i8 : Generator(I8)
-	i8 = u32->map(U32.to_i8_wrap)
+	i8 = u32 |> map(U32.to_i8_wrap)
 
 	## Construct a `Generator` for 8-bit signed integers between two boundaries (inclusive)
 	bounded_i8 : I8, I8 -> Generator(I8)
-	bounded_i8 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i8_wrap)
+	bounded_i8 = |x, y| bounded_i32_helper(x, y) |> map(I32.to_i8_wrap)
 
 	## A `Generator` for the full range of 16-bit unsigned integers
 	u16 : Generator(U16)
-	u16 = u32->map(U32.to_u16_wrap)
+	u16 = u32 |> map(U32.to_u16_wrap)
 
 	## Construct a `Generator` for 16-bit unsigned integers between two boundaries (inclusive)
 	bounded_u16 : U16, U16 -> Generator(U16)
-	bounded_u16 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u16_wrap)
+	bounded_u16 = |x, y| bounded_u32_helper(x, y) |> map(U32.to_u16_wrap)
 
 	## A `Generator` for the full range of 16-bit signed integers
 	i16 : Generator(I16)
-	i16 = u32->map(U32.to_i16_wrap)
+	i16 = u32 |> map(U32.to_i16_wrap)
 
 	## Construct a `Generator` for 16-bit signed integers between two boundaries (inclusive)
 	bounded_i16 : I16, I16 -> Generator(I16)
-	bounded_i16 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i16_wrap)
+	bounded_i16 = |x, y| bounded_i32_helper(x, y) |> map(I32.to_i16_wrap)
 
 	## A `Generator` for the full range of 32-bit unsigned integers
 	u32 : Generator(U32)
 	u32 = |state| {
-		value = state->permute()
-		next_state = state->update()
+		value = state |> permute
+		next_state = state |> update
 
 		{ value, state: next_state }
 	}
@@ -230,7 +230,7 @@ Random := [].{
 
 	## A `Generator` for the full range of 32-bit signed integers
 	i32 : Generator(I32)
-	i32 = u32->map(U32.to_i32_wrap)
+	i32 = u32 |> map(U32.to_i32_wrap)
 
 	## Construct a `Generator` for 32-bit signed integers between two boundaries (inclusive)
 	bounded_i32 : I32, I32 -> Generator(I32)
@@ -244,13 +244,14 @@ Random := [].{
 			lo: u32,
 		}.Random
 
-		component_generator->map(
-			|{ hi, lo }| {
-				hi_shifted = hi.to_u64().shl_wrap(32)
+		component_generator
+			|> map(
+				|{ hi, lo }| {
+					hi_shifted = hi.to_u64().shl_wrap(32)
 
-				(hi_shifted).bitwise_or(lo.to_u64())
-			},
-		)
+					(hi_shifted).bitwise_or(lo.to_u64())
+				},
+			)
 	}
 
 	## Construct a `Generator` for 64-bit unsigned integers between two boundaries (inclusive)
@@ -273,7 +274,7 @@ Random := [].{
 
 	## A `Generator` for the full range of 64-bit signed integers
 	i64 : Generator(I64)
-	i64 = u64->map(U64.to_i64_wrap)
+	i64 = u64 |> map(U64.to_i64_wrap)
 
 	## Construct a `Generator` for 64-bit signed integers between two boundaries (inclusive)
 	bounded_i64 : I64, I64 -> Generator(I64)
@@ -322,34 +323,35 @@ Random := [].{
 
 		expect input_is_valid
 
-		Random.u32->map(
-			|rand| {
-				if !input_is_valid return lo
+		Random.u32
+			|> map(
+				|rand| {
+					if !input_is_valid return lo
 
-				# these bits hold just the exponent for the range [1.0 .. 2.0)
-				exponent_bits = F32.to_bits(1.0)
+					# these bits hold just the exponent for the range [1.0 .. 2.0)
+					exponent_bits = F32.to_bits(1.0)
 
-				# random mantissa of 1.xxxxxx from lowest 23 bits of rand
-				mantissa_bits = U32.bitwise_and(rand, 0x007f_ffff)
+					# random mantissa of 1.xxxxxx from lowest 23 bits of rand
+					mantissa_bits = U32.bitwise_and(rand, 0x007f_ffff)
 
-				float_bits = U32.bitwise_or(exponent_bits, mantissa_bits)
+					float_bits = U32.bitwise_or(exponent_bits, mantissa_bits)
 
-				float_1_to_2 = F32.from_bits(float_bits)
+					float_1_to_2 = F32.from_bits(float_bits)
 
-				# bring that float down to [0.0 .. 1.0)
-				ratio = float_1_to_2 - 1.0
+					# bring that float down to [0.0 .. 1.0)
+					ratio = float_1_to_2 - 1.0
 
-				result = lo + (width * ratio)
+					result = lo + (width * ratio)
 
-				# in pathological rounding cases `result` can be too high
-				# if this happens, step down to the nearest valid value below `hi`
-				if result >= hi {
-					step_down_f32(hi)
-				} else {
-					result
-				}
-			},
-		)
+					# in pathological rounding cases `result` can be too high
+					# if this happens, step down to the nearest valid value below `hi`
+					if result >= hi {
+						step_down_f32(hi)
+					} else {
+						result
+					}
+				},
+			)
 	}
 
 	## `Generator` for an `F64` between two values excluding the high one
@@ -369,34 +371,35 @@ Random := [].{
 
 		expect input_is_valid
 
-		Random.u64->map(
-			|rand| {
-				if !input_is_valid return lo
+		Random.u64
+			|> map(
+				|rand| {
+					if !input_is_valid return lo
 
-				# these bits hold just the exponent for the range [1.0 .. 2.0)
-				exponent_bits = F64.to_bits(1.0)
+					# these bits hold just the exponent for the range [1.0 .. 2.0)
+					exponent_bits = F64.to_bits(1.0)
 
-				# random mantissa of 1.xxxxxx from lowest 52 bits of rand
-				mantissa_bits = U64.bitwise_and(rand, 0x000f_ffff_ffff_ffff)
+					# random mantissa of 1.xxxxxx from lowest 52 bits of rand
+					mantissa_bits = U64.bitwise_and(rand, 0x000f_ffff_ffff_ffff)
 
-				float_bits = U64.bitwise_or(exponent_bits, mantissa_bits)
+					float_bits = U64.bitwise_or(exponent_bits, mantissa_bits)
 
-				float_1_to_2 = F64.from_bits(float_bits)
+					float_1_to_2 = F64.from_bits(float_bits)
 
-				# bring that float down to [0.0 .. 1.0)
-				ratio = float_1_to_2 - 1.0
+					# bring that float down to [0.0 .. 1.0)
+					ratio = float_1_to_2 - 1.0
 
-				result = lo + (width * ratio)
+					result = lo + (width * ratio)
 
-				# in pathological rounding cases `result` can be too high
-				# if this happens, step down to the nearest valid value below `hi`
-				if result >= hi {
-					step_down_f64(hi)
-				} else {
-					result
-				}
-			},
-		)
+					# in pathological rounding cases `result` can be too high
+					# if this happens, step down to the nearest valid value below `hi`
+					if result >= hi {
+						step_down_f64(hi)
+					} else {
+						result
+					}
+				},
+			)
 	}
 
 	## Creates a `Generator` that randomly chooses from a series of items.
@@ -410,21 +413,22 @@ Random := [].{
 		# subtract 1 because bounded_u64 uses an inclusive range
 		choice_index_generator = Random.bounded_u64(0, num_choices - 1)
 
-		choice_index_generator->map(
-			|choice_index| {
-				if choice_index == 0 {
-					first
-				} else {
-					rest_index = choice_index - 1
-					match rest.get(rest_index) {
-						Ok(item) => item
-						Err(OutOfBounds) => {
-							crash "Random.choice: index out of bounds"
+		choice_index_generator
+			|> map(
+				|choice_index| {
+					if choice_index == 0 {
+						first
+					} else {
+						rest_index = choice_index - 1
+						match rest.get(rest_index) {
+							Ok(item) => item
+							Err(OutOfBounds) => {
+								crash "Random.choice: index out of bounds"
+							}
 						}
 					}
-				}
-			},
-		)
+				},
+			)
 	}
 
 	## Creates a `Generator` that randomly chooses an item from a `List`.
@@ -460,20 +464,21 @@ Random := [].{
 
 		total_weight = all_choices_iter.map(|(_, weight)| weight).sum()
 
-		Random.f64(0.0, total_weight)->map(
-			|rand| {
-				var $cumulative_sum = 0.0
+		Random.f64(0.0, total_weight)
+			|> map(
+				|rand| {
+					var $cumulative_sum = 0.0
 
-				for (item, weight) in all_choices_iter {
-					$cumulative_sum = $cumulative_sum + weight
-					if rand < $cumulative_sum return item
-				}
+					for (item, weight) in all_choices_iter {
+						$cumulative_sum = $cumulative_sum + weight
+						if rand < $cumulative_sum return item
+					}
 
-				# we can only get here due to rounding error, just return last item
-				last_choice = rest.last().ok_or(first)
-				last_choice.0
-			},
-		)
+					# we can only get here due to rounding error, just return last item
+					last_choice = rest.last().ok_or(first)
+					last_choice.0
+				},
+			)
 	}
 
 	## Creates a `Generator` that randomly chooses from a series of items with
@@ -626,9 +631,9 @@ pcg_rxs_m_xs = |state| {
 	final_xor_shift_amount = ((2 * output_bitcount) + 2) // 3
 
 	state
-		->xor_shift(first_xor_shift_amount)
-		->mul_wrap_u32(permute_multiplier)
-		->xor_shift(final_xor_shift_amount)
+		|> xor_shift(first_xor_shift_amount)
+		|> mul_wrap_u32(permute_multiplier)
+		|> xor_shift(final_xor_shift_amount)
 }
 
 # See section 4.1 on page 20 in the PCG paper (see link above).
@@ -657,18 +662,18 @@ step_forward = |state, var $delta| {
 			$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
 			$acc_plus =
 				mul_wrap_u32($acc_plus, $cur_mult)
-					->add_wrap_u32($cur_plus)
+					|> add_wrap_u32($cur_plus)
 		}
 		$cur_plus =
 			add_wrap_u32($cur_mult, 1)
-				->mul_wrap_u32($cur_plus)
+				|> mul_wrap_u32($cur_plus)
 		$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
 		$delta = $delta // 2
 	}
 
 	next_s =
 		mul_wrap_u32(state.s, $acc_mult)
-			->add_wrap_u32($acc_plus)
+			|> add_wrap_u32($acc_plus)
 
 	{ ..state, s: next_s }
 }
@@ -702,10 +707,10 @@ mul_wrap_u32 : U32, U32 -> U32
 mul_wrap_u32 = |a, b| (a.to_u64() * b.to_u64()).to_u32_wrap()
 
 negate_wrap_u32 : U32 -> U32
-negate_wrap_u32 = |a| a.bitwise_not()->add_wrap_u32(1)
+negate_wrap_u32 = |a| a.bitwise_not() |> add_wrap_u32(1)
 
 negate_wrap_u64 : U64 -> U64
-negate_wrap_u64 = |a| a.bitwise_not()->add_wrap_u64(1)
+negate_wrap_u64 = |a| a.bitwise_not() |> add_wrap_u64(1)
 
 step_down_f32 : F32 -> F32
 step_down_f32 = |a| {
@@ -778,7 +783,7 @@ expect {
 }
 
 expect {
-	doubled_int = Random.bounded_i32(-100, 100)->Random.map(|i| i * 2)
+	doubled_int = Random.bounded_i32(-100, 100) |> Random.map(|i| i * 2)
 
 	test_passes_with_many_seeds(
 		|seed_num| {
@@ -1036,21 +1041,21 @@ pcg_c_known_answer_test_generator = |state| {
 
 		lines = groups.map(
 			|group| {
-				group.map(|card| " ${card_to_str(card)}")->Str.join_with("")
+				group.map(|card| " ${card_to_str(card)}") |> Str.join_with("")
 			},
 		)
 
-		lines->Str.join_with("\n\t")
+		lines |> Str.join_with("\n\t")
 	}
 
 	test_round_to_str : TestRound, U64 -> Str
 	test_round_to_str = |round, index| {
 		{ u32_list, u32_list_again, coins, rolls, cards } = round
 
-		u32_list_str = u32_list.map(u32_to_hex_str)->Str.join_with(" ")
-		u32_list_again_str = u32_list_again.map(u32_to_hex_str)->Str.join_with(" ")
-		coins_str = coins.map(|n| if (n == 0) 'T' else 'H')->Str.from_utf8_lossy()
-		rolls_str = rolls.map(U32.to_str)->Str.join_with(" ")
+		u32_list_str = u32_list.map(u32_to_hex_str) |> Str.join_with(" ")
+		u32_list_again_str = u32_list_again.map(u32_to_hex_str) |> Str.join_with(" ")
+		coins_str = coins.map(|n| if (n == 0) 'T' else 'H') |> Str.from_utf8_lossy
+		rolls_str = rolls.map(U32.to_str) |> Str.join_with(" ")
 		cards_str = deck_to_str(cards)
 
 		# the missing space on the cards string is intentional to match
@@ -1067,7 +1072,7 @@ pcg_c_known_answer_test_generator = |state| {
 		Random.list(test_round_generator, 5)(state)
 
 	value =
-		test_rounds.value.map_with_index(test_round_to_str)->Str.join_with("\n\n")
+		test_rounds.value.map_with_index(test_round_to_str) |> Str.join_with("\n\n")
 
 	{ value, state: test_rounds.state }
 }
@@ -1108,7 +1113,7 @@ test_round_generator = |var $state| {
 	{ value: u32_list, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
-	$state = $state->step_backward(6)
+	$state = $state |> step_backward(6)
 
 	{ value: u32_list_again, state: $state } =
 		Random.list(Random.u32, 6)($state)
@@ -1244,7 +1249,7 @@ expect {
 	initial_state = Random.seed(42)
 	n = Random.u32(initial_state)
 
-	actual = initial_state->step_forward(1)
+	actual = initial_state |> step_forward(1)
 	expected = n.state
 
 	actual == expected
@@ -1254,7 +1259,7 @@ expect {
 expect {
 	initial_state = Random.seed(42)
 
-	initial_state->step_backward(1) == initial_state->step_forward(U32.highest)
+	initial_state |> step_backward(1) == initial_state |> step_forward(U32.highest)
 }
 
 # repeat after backwards step
@@ -1262,7 +1267,7 @@ expect {
 	initial_state = Random.seed(11)
 
 	n1 = Random.u32(initial_state)
-	n2 = Random.u32(n1.state->step_backward(1))
+	n2 = Random.u32(n1.state |> step_backward(1))
 
 	n1 == n2
 }
@@ -1271,7 +1276,7 @@ expect {
 	var $state = Random.seed(11)
 
 	{ value: n1, state: $state } = Random.u32($state)
-	$state = $state->step_backward(1)
+	$state = $state |> step_backward(1)
 	{ value: n2, state: $state } = Random.u32($state)
 
 	n1 == n2
@@ -1283,7 +1288,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums_again = Random.list(Random.u32, 2)(nums.state->step_backward(2))
+	nums_again = Random.list(Random.u32, 2)(nums.state |> step_backward(2))
 
 	nums == nums_again
 }
@@ -1294,7 +1299,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums.state == initial_state->step_forward(2)
+	nums.state == initial_state |> step_forward(2)
 }
 
 # step forward with odd delta
@@ -1303,17 +1308,17 @@ expect {
 
 	nums = Random.list(Random.u32, 3)(initial_state)
 
-	nums.state == initial_state->step_forward(3)
+	nums.state == initial_state |> step_forward(3)
 }
 
 expect {
 	state = Random.seed(0)
 
 	same_state = state
-		->step_forward(1)
-		->step_forward(1)
-		->step_forward(2)
-		->step_backward(4)
+		|> step_forward(1)
+		|> step_forward(1)
+		|> step_forward(2)
+		|> step_backward(4)
 
 	same_state == state
 }
