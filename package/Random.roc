@@ -39,6 +39,42 @@ Random := [].{
 	## Internal state for Generators
 	State :: { s : U32, update_increment : U32 }.{
 		is_eq : _
+
+		## Manually step the random state forward by n steps. The sequence has a
+		## period of 2 to the 32 steps, and will wrap around to the beginning
+		## after that.
+		fast_forward : State, U32 -> State
+		fast_forward = |state, var $delta| {
+			var $acc_mult = 1.U32
+			var $acc_plus = 0.U32
+			var $cur_mult = default_u32_update_multiplier
+			var $cur_plus = state.update_increment
+
+			while $delta > 0 {
+				if $delta % 2 == 1 {
+					$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
+					$acc_plus =
+						mul_wrap_u32($acc_plus, $cur_mult)
+							|> add_wrap_u32($cur_plus)
+				}
+				$cur_plus =
+					add_wrap_u32($cur_mult, 1)
+						|> mul_wrap_u32($cur_plus)
+				$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
+				$delta = $delta // 2
+			}
+
+			next_s =
+				mul_wrap_u32(state.s, $acc_mult)
+					|> add_wrap_u32($acc_plus)
+
+			{ ..state, s: next_s }
+		}
+
+		## Manually step the random state backward by n steps. Will wrap around to
+		## the end of the sequence when stepping backward from the "0th" state.
+		rewind : State, U32 -> State
+		rewind = |state, delta| state.fast_forward(negate_wrap_u32(delta))
 	}
 
 	## Construct an initial "seed" `State` for `Generator`s
@@ -648,41 +684,6 @@ update = |state| {
 	{ ..state, s: next_s }
 }
 
-# Step the random state forward by n steps. The sequence has a period of
-# 2 to the 32 steps, and will wrap around after that.
-step_forward : Random.State, U32 -> Random.State
-step_forward = |state, var $delta| {
-	var $acc_mult = 1.U32
-	var $acc_plus = 0.U32
-	var $cur_mult = default_u32_update_multiplier
-	var $cur_plus = state.update_increment
-
-	while $delta > 0 {
-		if $delta % 2 == 1 {
-			$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
-			$acc_plus =
-				mul_wrap_u32($acc_plus, $cur_mult)
-					|> add_wrap_u32($cur_plus)
-		}
-		$cur_plus =
-			add_wrap_u32($cur_mult, 1)
-				|> mul_wrap_u32($cur_plus)
-		$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
-		$delta = $delta // 2
-	}
-
-	next_s =
-		mul_wrap_u32(state.s, $acc_mult)
-			|> add_wrap_u32($acc_plus)
-
-	{ ..state, s: next_s }
-}
-
-# Step the random state backward by n steps. Will wrap around to the end of
-# the sequence when stepping backward from the "0th" state
-step_backward : Random.State, U32 -> Random.State
-step_backward = |state, delta| step_forward(state, negate_wrap_u32(delta))
-
 # Common math helpers
 
 xor_shift : U32, U8 -> U32
@@ -1113,7 +1114,7 @@ test_round_generator = |var $state| {
 	{ value: u32_list, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
-	$state = $state |> step_backward(6)
+	$state = $state.rewind(6)
 
 	{ value: u32_list_again, state: $state } =
 		Random.list(Random.u32, 6)($state)
@@ -1249,7 +1250,7 @@ expect {
 	initial_state = Random.seed(42)
 	n = Random.u32(initial_state)
 
-	actual = initial_state |> step_forward(1)
+	actual = initial_state.fast_forward(1)
 	expected = n.state
 
 	actual == expected
@@ -1259,7 +1260,7 @@ expect {
 expect {
 	initial_state = Random.seed(42)
 
-	initial_state |> step_backward(1) == initial_state |> step_forward(U32.highest)
+	initial_state.rewind(1) == initial_state.fast_forward(U32.highest)
 }
 
 # repeat after backwards step
@@ -1267,7 +1268,7 @@ expect {
 	initial_state = Random.seed(11)
 
 	n1 = Random.u32(initial_state)
-	n2 = Random.u32(n1.state |> step_backward(1))
+	n2 = Random.u32(n1.state.rewind(1))
 
 	n1 == n2
 }
@@ -1276,7 +1277,7 @@ expect {
 	var $state = Random.seed(11)
 
 	{ value: n1, state: $state } = Random.u32($state)
-	$state = $state |> step_backward(1)
+	$state = $state.rewind(1)
 	{ value: n2, state: $state } = Random.u32($state)
 
 	n1 == n2
@@ -1288,7 +1289,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums_again = Random.list(Random.u32, 2)(nums.state |> step_backward(2))
+	nums_again = Random.list(Random.u32, 2)(nums.state.rewind(2))
 
 	nums == nums_again
 }
@@ -1299,7 +1300,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums.state == initial_state |> step_forward(2)
+	nums.state == initial_state.fast_forward(2)
 }
 
 # step forward with odd delta
@@ -1308,17 +1309,17 @@ expect {
 
 	nums = Random.list(Random.u32, 3)(initial_state)
 
-	nums.state == initial_state |> step_forward(3)
+	nums.state == initial_state.fast_forward(3)
 }
 
 expect {
 	state = Random.seed(0)
 
 	same_state = state
-		|> step_forward(1)
-		|> step_forward(1)
-		|> step_forward(2)
-		|> step_backward(4)
+		.fast_forward(1)
+		.fast_forward(1)
+		.fast_forward(2)
+		.rewind(4)
 
 	same_state == state
 }
