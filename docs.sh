@@ -3,6 +3,13 @@
 # https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -euxo pipefail
 
+# Generate the docs for one version into www/ for local preview.
+#
+# www/ is not checked in. The release workflow generates these docs itself,
+# ships them as a release asset, and deploys GitHub Pages from that asset, so
+# nothing here needs to be committed. To preview the published site instead,
+# run ./scripts/restore_published_docs.sh
+
 # Function to validate version number format (x.y.z)
 validate_version() {
     if [[ ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

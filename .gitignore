@@ -1,5 +1,12 @@
 generated-docs/
 .roc-random-tmp/
+
+# Generated docs site. Not checked in: every release ships it as a
+# roc-random-docs-<version>.tar.gz asset, and GitHub Pages deploys from there.
+# Recreate it locally with ./docs.sh or ./scripts/restore_published_docs.sh
+www/
+*.restore.*
+
 *.ll
 __pycache__/
 

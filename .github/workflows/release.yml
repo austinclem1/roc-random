@@ -81,6 +81,11 @@ jobs:
           bundle_glob: dist/*.tar.zst
           test_os_json: '["ubuntu-26.04"]'
 
+      - name: Restore published docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/restore_published_docs.sh --output-dir www --allow-missing
+
       - name: Snapshot existing docs
         uses: roc-lang/release-package/actions/docs-snapshot@bb018c8c96b439b9545db6c792adc0549cf01ee1
         with:
@@ -103,8 +108,15 @@ jobs:
           docs_root: www
           docs_version: ${{ steps.validate.outputs.docs_version }}
 
-      - name: Archive docs site
-        run: tar -czf "dist/roc-random-docs-${{ steps.validate.outputs.docs_version }}.tar.gz" www
+      # Only this release's own docs: the site is reassembled from every
+      # release's asset, so an archive of the whole site would make each release
+      # redundantly carry all of its predecessors.
+      - name: Archive docs
+        env:
+          DOCS_VERSION: ${{ steps.validate.outputs.docs_version }}
+        run: |
+          mkdir -p dist
+          tar -czf "dist/roc-random-docs-${DOCS_VERSION}.tar.gz" -C www "${DOCS_VERSION}"
 
       - name: Upload release bundles
         uses: actions/upload-artifact@v7
@@ -292,19 +304,20 @@ jobs:
             roc test "$example" --no-cache
           done
 
-      - name: Open docs and examples follow-up PR
+      - name: Open examples follow-up PR
         uses: roc-lang/release-package/actions/create-followup-pr@bb018c8c96b439b9545db6c792adc0549cf01ee1
         with:
           release_version: ${{ needs.build.outputs.release_version }}
           paths: |
             examples
-            www
           branch_prefix: release-followup
           base_branch: ${{ github.ref_name }}
-          commit_message: Update docs and examples for ${{ needs.build.outputs.release_version }}
-          pr_title: Update docs and examples for ${{ needs.build.outputs.release_version }}
+          commit_message: Update examples for ${{ needs.build.outputs.release_version }}
+          pr_title: Update examples for ${{ needs.build.outputs.release_version }}
           pr_body: |
             Release follow-up for ${{ needs.build.outputs.release_version }}.
 
-            Updated generated package docs, the docs index, and checked-in example package URLs.
+            Updated the checked-in example package URLs. Generated docs are not
+            committed: they ship as the `roc-random-docs-${{ needs.build.outputs.docs_version }}.tar.gz`
+            release asset and are deployed to GitHub Pages from there.
           github_token: ${{ github.token }}
