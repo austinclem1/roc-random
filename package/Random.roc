@@ -39,6 +39,42 @@ Random := [].{
 	## Internal state for Generators
 	State :: { s : U32, update_increment : U32 }.{
 		is_eq : _
+
+		## Manually step the random state forward by n steps. The sequence has a
+		## period of 2 to the 32 steps, and will wrap around to the beginning
+		## after that.
+		fast_forward : State, U32 -> State
+		fast_forward = |state, var $delta| {
+			var $acc_mult = 1.U32
+			var $acc_plus = 0.U32
+			var $cur_mult = default_u32_update_multiplier
+			var $cur_plus = state.update_increment
+
+			while $delta > 0 {
+				if $delta % 2 == 1 {
+					$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
+					$acc_plus =
+						mul_wrap_u32($acc_plus, $cur_mult)
+							|> add_wrap_u32($cur_plus)
+				}
+				$cur_plus =
+					add_wrap_u32($cur_mult, 1)
+						|> mul_wrap_u32($cur_plus)
+				$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
+				$delta = $delta // 2
+			}
+
+			next_s =
+				mul_wrap_u32(state.s, $acc_mult)
+					|> add_wrap_u32($acc_plus)
+
+			{ ..state, s: next_s }
+		}
+
+		## Manually step the random state backward by n steps. Will wrap around to
+		## the end of the sequence when stepping backward from the "0th" state.
+		rewind : State, U32 -> State
+		rewind = |state, delta| state.fast_forward(negate_wrap_u32(delta))
 	}
 
 	## Construct an initial "seed" `State` for `Generator`s
@@ -65,9 +101,9 @@ Random := [].{
 		update_increment = sequence_id.shl_wrap(1).bitwise_or(1)
 
 		var $seed = State.({ s: 0, update_increment })
-		$seed = $seed->update()
+		$seed = $seed |> update
 		$seed = { ..$seed, s: $seed.s + initial_seed }
-		$seed->update()
+		$seed |> update
 	}
 
 	## Generate a `Generation` from a state
@@ -113,11 +149,20 @@ Random := [].{
 			{ value: combiner(first, second), state: state3 }
 		}
 
-	## Compose two `Generator`s into a single `Generator`.
+	## Create a `Generator` by chaining one `Generator` with a function that
+	## returns a new `Generator`
 	##
-	## This is an alias for `map2`; record-builder syntax calls `map2` directly.
-	chain : Generator(a), Generator(b), (a, b -> c) -> Generator(c)
-	chain = map2
+	## ```roc
+	## generate_random_amount_of_random_u8s =
+	##     Random.chain(Random.bounded_U64(1, 10), |count| Random.list(Random.u8, count))
+	## ```
+	chain : Generator(a), (a -> Generator(b)) -> Generator(b)
+	chain = |first_generator, func| {
+		|state| {
+			{ value, state: next_state } = first_generator(state)
+			func(value)(next_state)
+		}
+	}
 
 	## Generate a list of random values.
 	## ```
@@ -127,8 +172,7 @@ Random := [].{
 	## ```
 	list : Generator(a), U64 -> Generator(List(a))
 	list = |generator, length| {
-		|state| {
-			var $state = state
+		|var $state| {
 			var $result = List.with_capacity(length)
 
 			for _ in 0..<length {
@@ -140,133 +184,443 @@ Random := [].{
 		}
 	}
 
-	## Construct a `Generator` for 8-bit unsigned integers
-	## NOTE: We are just taking the bottom 8 bits of the generated `U32` value
-	## Some backing generators have worse statistical properties in the low-order bits
-	## and it would be wise to use the upper 8 bits instead, but according to the pcg
-	## paper (M.E. O'Neill) this backing generator has good statistical quality throughout
-	## all the bits (perhaps from the good high bits being rotated/shifted around etc)
+	## Given a `List` generate a shuffled version of that `List`
+	shuffle : List(a) -> Generator(List(a))
+	shuffle = |items| {
+		# TODO: does this create a longstanding reference to the unshuffled
+		# items potentially preventing mutation optimization at the
+		# `shuffle` usage site?
+		|var $state| {
+			if items.len() < 2 return { value: items, state: $state }
+
+			var $items = items
+			for i in (1..<items.len()).rev() {
+				{ value: choice_i, state: $state } =
+					bounded_u64(0, i)($state)
+				$items = match $items.swap(i, choice_i) {
+					Ok(l) => l
+					Err(_) => {
+						crash "error in `Random.shuffle`"
+						[]
+					}
+				}
+			}
+
+			{ value: $items, state: $state }
+		}
+	}
+
+	## A `Generator` that generates `Bool.True` or `Bool.False` with equal probabilty
+	bool : Generator(Bool)
+	bool = u32 |> map(U32.is_odd)
+
+	## A `Generator` for the full range of 8-bit unsigned integers
 	u8 : Generator(U8)
-	u8 = u32->map(U32.to_u8_wrap)
+	# NOTE: We are just taking the bottom 8 bits of the generated `U32` value
+	# Some backing generators have worse statistical properties in the low-order bits
+	# and it would be wise to use the upper 8 bits instead, but according to the pcg
+	# paper (M.E. O'Neill) this backing generator has good statistical quality throughout
+	# all the bits (perhaps from the good high bits being rotated/shifted around etc)
+	u8 = u32 |> map(U32.to_u8_wrap)
 
 	## Construct a `Generator` for 8-bit unsigned integers between two boundaries (inclusive)
 	bounded_u8 : U8, U8 -> Generator(U8)
-	bounded_u8 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u8_wrap)
+	bounded_u8 = |x, y| bounded_u32_helper(x, y) |> map(U32.to_u8_wrap)
 
-	## Construct a `Generator` for 8-bit signed integers
+	## A `Generator` for the full range of 8-bit signed integers
 	i8 : Generator(I8)
-	i8 = u32->map(U32.to_i8_wrap)
+	i8 = u32 |> map(U32.to_i8_wrap)
 
 	## Construct a `Generator` for 8-bit signed integers between two boundaries (inclusive)
 	bounded_i8 : I8, I8 -> Generator(I8)
-	bounded_i8 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i8_wrap)
+	bounded_i8 = |x, y| bounded_i32_helper(x, y) |> map(I32.to_i8_wrap)
 
-	## Construct a `Generator` for 16-bit unsigned integers
+	## A `Generator` for the full range of 16-bit unsigned integers
 	u16 : Generator(U16)
-	u16 = u32->map(U32.to_u16_wrap)
+	u16 = u32 |> map(U32.to_u16_wrap)
 
 	## Construct a `Generator` for 16-bit unsigned integers between two boundaries (inclusive)
 	bounded_u16 : U16, U16 -> Generator(U16)
-	bounded_u16 = |x, y| bounded_u32_helper(x, y)->map(U32.to_u16_wrap)
+	bounded_u16 = |x, y| bounded_u32_helper(x, y) |> map(U32.to_u16_wrap)
 
-	## Construct a `Generator` for 16-bit signed integers
+	## A `Generator` for the full range of 16-bit signed integers
 	i16 : Generator(I16)
-	i16 = u32->map(U32.to_i16_wrap)
+	i16 = u32 |> map(U32.to_i16_wrap)
 
 	## Construct a `Generator` for 16-bit signed integers between two boundaries (inclusive)
 	bounded_i16 : I16, I16 -> Generator(I16)
-	bounded_i16 = |x, y| bounded_i32_helper(x, y)->map(I32.to_i16_wrap)
+	bounded_i16 = |x, y| bounded_i32_helper(x, y) |> map(I32.to_i16_wrap)
 
-	## Construct a `Generator` for 32-bit unsigned integers
+	## A `Generator` for the full range of 32-bit unsigned integers
 	u32 : Generator(U32)
 	u32 = |state| {
-		value = state->permute()
-		next_state = state->update()
+		value = state |> permute
+		next_state = state |> update
 
 		{ value, state: next_state }
 	}
 
 	## Construct a `Generator` for 32-bit unsigned integers between two boundaries (inclusive)
 	bounded_u32 : U32, U32 -> Generator(U32)
-	bounded_u32 = bounded_u32_helper
+	bounded_u32 = |x, y| bounded_u32_helper(x, y)
 
-	## Construct a `Generator` for 32-bit signed integers
+	## A `Generator` for the full range of 32-bit signed integers
 	i32 : Generator(I32)
-	i32 = u32->map(U32.to_i32_wrap)
+	i32 = u32 |> map(U32.to_i32_wrap)
 
 	## Construct a `Generator` for 32-bit signed integers between two boundaries (inclusive)
 	bounded_i32 : I32, I32 -> Generator(I32)
-	bounded_i32 = bounded_i32_helper
-}
+	bounded_i32 = |x, y| bounded_i32_helper(x, y)
 
-# Helpers for the above constructors -------------------------------------------
+	## A `Generator` for the full range of 64-bit unsigned integers
+	u64 : Generator(U64)
+	u64 = {
+		component_generator = {
+			hi: u32,
+			lo: u32,
+		}.Random
 
-## Generate a random U32 in the range `[0, range)` returning the new state of
-## the backing PCG See [www.pcg-random.org/posts/bounded-rands.html](https://www.pcg-random.org/posts/bounded-rands.html)
-## Ported from PCG-C implementation. If a truly random generator was backing
-## this, technically there would be a very very slim chance of this while loop
-## never terminating, but because the backing PCG in this implimentation is well
-## distributed in its values over time, it will quickly find a value that
-## doesn't suffer from a bias toward lower numbers in the range.
-## The pathological value for `range` is slightly larger than `2**31` causing
-## almost half of generated candidates to be rejected. In practice, with small
-## `range` values, there is an extremely miniscule chance of generating even a
-## single value that needs to be rejected.
-##
-u32_exclusive_range_unbiased : State, int -> { value : U32, state : State } where [int.to_u32 : int -> U32]
-u32_exclusive_range_unbiased = |state, range| {
-	range_u32 = range.to_u32()
-	threshold = negate_wrap_u32(range_u32) % range_u32
+		component_generator
+			|> map(
+				|{ hi, lo }| {
+					hi_shifted = hi.to_u64().shl_wrap(32)
 
-	var $state = state
-	while True {
-		x = $state->permute()
-		$state = $state->update()
-		if x >= threshold {
-			return { value: x % range_u32, state: $state }
+					(hi_shifted).bitwise_or(lo.to_u64())
+				},
+			)
+	}
+
+	## Construct a `Generator` for 64-bit unsigned integers between two boundaries (inclusive)
+	bounded_u64 : U64, U64 -> Generator(U64)
+	bounded_u64 = |x, y| {
+		(minimum, maximum) = sort(x, y)
+
+		range = match (maximum - minimum).plus_try(1) {
+			# we need full range `U64` generator
+			Err(Overflow) => return Random.u64
+			Ok(r) => r
+		}
+
+		|var $state| {
+			{ value: offset, state: $state } =
+				u64_exclusive_range_unbiased(range)($state)
+			{ value: minimum + offset, state: $state }
+		}
+	}
+
+	## A `Generator` for the full range of 64-bit signed integers
+	i64 : Generator(I64)
+	i64 = u64 |> map(U64.to_i64_wrap)
+
+	## Construct a `Generator` for 64-bit signed integers between two boundaries (inclusive)
+	bounded_i64 : I64, I64 -> Generator(I64)
+	bounded_i64 = |x, y| {
+		(minimum, maximum) = sort(x, y)
+
+		range = match I64.abs_diff(maximum, minimum).plus_try(1) {
+			# we need full range `U64` generator
+			Err(Overflow) => return Random.i64
+			Ok(r) => r
+		}
+
+		|var $state| {
+			{ value: offset, state: $state } =
+				u64_exclusive_range_unbiased(range)($state)
+
+			offset_i64 = offset.to_i64_wrap()
+
+			value = add_wrap_i64(minimum, offset_i64)
+
+			{ value, state: $state }
+		}
+	}
+
+	## `Generator` for an `F32` between two values excluding the high one
+	## It is generally recommended NOT to use this when your intention is to convert
+	## the floating point number to an integer due to potential rounding errors
+	## etc, prefer the `bounded_*` integer generators for those cases
+	f32 : F32, F32 -> Generator(F32)
+	f32 = |lo, hi| {
+		# This generator is aimed at a balance between performance/simplicity and
+		# statistical correctness. It will always produce a value less than the high
+		# bound (important if someone is converting this to an array index)
+		#
+		# we start with an equally distributed `F32` in [1.0 .. 2.0) then
+		# scale and offset it to the desired output range
+		#
+		# Keep in sync with `Random.f64`
+
+		width = hi - lo
+
+		input_is_valid = lo.is_finite()
+			and hi.is_finite()
+				and width.is_finite()
+					and width.is_positive()
+
+		expect input_is_valid
+
+		Random.u32
+			|> map(
+				|rand| {
+					if !input_is_valid return lo
+
+					# these bits hold just the exponent for the range [1.0 .. 2.0)
+					exponent_bits = F32.to_bits(1.0)
+
+					# random mantissa of 1.xxxxxx from lowest 23 bits of rand
+					mantissa_bits = U32.bitwise_and(rand, 0x007f_ffff)
+
+					float_bits = U32.bitwise_or(exponent_bits, mantissa_bits)
+
+					float_1_to_2 = F32.from_bits(float_bits)
+
+					# bring that float down to [0.0 .. 1.0)
+					ratio = float_1_to_2 - 1.0
+
+					result = lo + (width * ratio)
+
+					# in pathological rounding cases `result` can be too high
+					# if this happens, step down to the nearest valid value below `hi`
+					if result >= hi {
+						step_down_f32(hi)
+					} else {
+						result
+					}
+				},
+			)
+	}
+
+	## `Generator` for an `F64` between two values excluding the high one
+	## It is generally recommended NOT to use this when your intention is to convert
+	## the floating point number to an integer due to potential rounding errors
+	## etc, prefer the `bounded_*` integer generators for those cases
+	f64 : F64, F64 -> Generator(F64)
+	f64 = |lo, hi| {
+		# see commentary on `Random.f32` (these must be kept in sync!)
+
+		width = hi - lo
+
+		input_is_valid = lo.is_finite()
+			and hi.is_finite()
+				and width.is_finite()
+					and width.is_positive()
+
+		expect input_is_valid
+
+		Random.u64
+			|> map(
+				|rand| {
+					if !input_is_valid return lo
+
+					# these bits hold just the exponent for the range [1.0 .. 2.0)
+					exponent_bits = F64.to_bits(1.0)
+
+					# random mantissa of 1.xxxxxx from lowest 52 bits of rand
+					mantissa_bits = U64.bitwise_and(rand, 0x000f_ffff_ffff_ffff)
+
+					float_bits = U64.bitwise_or(exponent_bits, mantissa_bits)
+
+					float_1_to_2 = F64.from_bits(float_bits)
+
+					# bring that float down to [0.0 .. 1.0)
+					ratio = float_1_to_2 - 1.0
+
+					result = lo + (width * ratio)
+
+					# in pathological rounding cases `result` can be too high
+					# if this happens, step down to the nearest valid value below `hi`
+					if result >= hi {
+						step_down_f64(hi)
+					} else {
+						result
+					}
+				},
+			)
+	}
+
+	## Creates a `Generator` that randomly chooses from a series of items.
+	## The first item is given explicitly as the first argument to ensure that
+	## there's always at least one item to choose from. See `Random.choice_try`
+	## for an alternative that checks for an empty `List`.
+	choice : a, List(a) -> Generator(a)
+	choice = |first, rest| {
+		num_choices = 1 + rest.len()
+
+		# subtract 1 because bounded_u64 uses an inclusive range
+		choice_index_generator = Random.bounded_u64(0, num_choices - 1)
+
+		choice_index_generator
+			|> map(
+				|choice_index| {
+					if choice_index == 0 {
+						first
+					} else {
+						rest_index = choice_index - 1
+						match rest.get(rest_index) {
+							Ok(item) => item
+							Err(OutOfBounds) => {
+								crash "Random.choice: index out of bounds"
+							}
+						}
+					}
+				},
+			)
+	}
+
+	## Creates a `Generator` that randomly chooses an item from a `List`.
+	## Returns `Err(ListWasEmpty)` upon construction if given an empty `List`.
+	## See `Random.choice` for a version that cannot return an error.
+	choice_try : List(a) -> Try(Generator(a), [ListWasEmpty])
+	choice_try = |items| {
+		match items {
+			[] => Err(ListWasEmpty)
+			[first, .. as rest] => Ok(choice(first, rest))
+		}
+	}
+
+	## Creates a `Generator` that randomly chooses from a series of items with
+	## an associated weight. Higher weight indicates a higher probability
+	## of selection. The weights don't need to add up to any particular value,
+	## probability is relative to the total sum of given weights.
+	## The first item is given explicitly as the first argument to ensure that
+	## there's always at least one item to choose from.
+	## See `Random.choice_weighted_try` for an alternative that checks for an
+	## empty `List`
+	choice_weighted : (a, F64), List((a, F64)) -> Generator(a)
+	choice_weighted = |first, rest| {
+		validate_weight = |weight| {
+			expect weight.is_finite() and weight >= 0.0
+			if (weight.is_finite()) weight.abs() else 0.0
+		}
+
+		# TODO: using noisy concat version due to current compiler bug
+		all_choices_iter =
+			(Iter.single(first).concat(rest.iter()))
+				.map(|(item, weight)| (item, validate_weight(weight)))
+
+		total_weight = all_choices_iter.map(|(_, weight)| weight).sum()
+
+		Random.f64(0.0, total_weight)
+			|> map(
+				|rand| {
+					var $cumulative_sum = 0.0
+
+					for (item, weight) in all_choices_iter {
+						$cumulative_sum = $cumulative_sum + weight
+						if rand < $cumulative_sum return item
+					}
+
+					# we can only get here due to rounding error, just return last item
+					last_choice = rest.last().ok_or(first)
+					last_choice.0
+				},
+			)
+	}
+
+	## Creates a `Generator` that randomly chooses from a series of items with
+	## an associated weight. Higher weight indicates higher a higher probability
+	## of selection. The weights don't need to add up to any particular value,
+	## probability is relative to the total sum of given weights.
+	## Returns `Err(ListWasEmpty)` upon construction if given an empty `List`.
+	## See `Random.choice_weighted` for a version that cannot return an error.
+	choice_weighted_try : List((a, F64)) -> Try(Generator(a), [ListWasEmpty])
+	choice_weighted_try = |items| {
+		match items {
+			[] => Err(ListWasEmpty)
+			[first, .. as rest] => Ok(choice_weighted(first, rest))
 		}
 	}
 }
 
+# Helpers for the above constructors -------------------------------------------
+
+# Generate a random U32 in the range `[0, range)` returning the new state of
+# the backing PCG See [www.pcg-random.org/posts/bounded-rands.html](https://www.pcg-random.org/posts/bounded-rands.html)
+# Ported from PCG-C implementation. If a truly random generator was backing
+# this, technically there would be a very very slim chance of this while loop
+# never terminating, but because the backing PCG in this implementation is well
+# distributed in its values over time, it will quickly find a value that
+# doesn't suffer from a bias toward lower numbers in the range.
+# The pathological value for `range` is slightly larger than `2**31` causing
+# almost half of generated candidates to be rejected. In practice, with small
+# `range` values, there is an extremely miniscule chance of generating even a
+# single value that needs to be rejected.
+u32_exclusive_range_unbiased : U32 -> Generator(U32)
+u32_exclusive_range_unbiased = |range| {
+	|var $state| {
+		threshold = negate_wrap_u32(range) % range
+
+		while True {
+			{ value: x, state: $state } = Random.u32($state)
+			if x >= threshold {
+				return { value: x % range, state: $state }
+			}
+		}
+	}
+}
+
+# see `u32_exclusive_range_unbiased` for commentary
+u64_exclusive_range_unbiased : U64 -> Generator(U64)
+u64_exclusive_range_unbiased = |range| {
+	|var $state| {
+		threshold = negate_wrap_u64(range) % range
+
+		while True {
+			{ value: x, state: $state } = Random.u64($state)
+			if x >= threshold {
+				return { value: x % range, state: $state }
+			}
+		}
+	}
+}
+
+# convenience function that takes inclusive ranges of `U32`s or smaller ints
+# (with lower bound offset) and dispatches to unbiased exclusive range
+# generator
 bounded_u32_helper : int, int -> Generator(U32) where [int.to_u32 : int -> U32]
 bounded_u32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_u32(), y.to_u32())
 
+	range : U32
 	range = match (maximum - minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
 		Err(Overflow) => return Random.u32
 	}
 
-	|state| {
-		offset = state->u32_exclusive_range_unbiased(range)
+	|var $state| {
+		{ value: offset, state: $state } = u32_exclusive_range_unbiased(range)($state)
 
-		value = minimum + offset.value
+		value = minimum + offset
 
-		{ value, state: offset.state }
+		{ value, state: $state }
 	}
 }
 
+# similar to `bounded_u32_helper` but handles signed arithmetic for result
 bounded_i32_helper : int, int -> Generator(I32) where [int.to_i32 : int -> I32]
 bounded_i32_helper = |x, y| {
 	(minimum, maximum) = sort(x.to_i32(), y.to_i32())
+	range : U32
 	range = match I32.abs_diff(maximum, minimum).plus_try(1) {
 		Ok(r) => r
 		# If absolute range doesn't fit in a U32 we need the full range generator
 		Err(Overflow) => return Random.i32
 	}
 
-	|state| {
-		offset = state->u32_exclusive_range_unbiased(range)
-		offset_i32 = offset.value.to_i32_wrap()
+	|var $state| {
+		{ value: offset, state: $state } = u32_exclusive_range_unbiased(range)($state)
+
+		offset_i32 = offset.to_i32_wrap()
+
 		value = add_wrap_i32(minimum, offset_i32)
 
-		{ value, state: offset.state }
+		{ value, state: $state }
 	}
 }
 
 sort = |x, y|
-	if x < y {
+	if x <= y {
 		(x, y)
 	} else {
 		(y, x)
@@ -313,9 +667,9 @@ pcg_rxs_m_xs = |state| {
 	final_xor_shift_amount = ((2 * output_bitcount) + 2) // 3
 
 	state
-		->xor_shift(first_xor_shift_amount)
-		->mul_wrap_u32(permute_multiplier)
-		->xor_shift(final_xor_shift_amount)
+		|> xor_shift(first_xor_shift_amount)
+		|> mul_wrap_u32(permute_multiplier)
+		|> xor_shift(final_xor_shift_amount)
 }
 
 # See section 4.1 on page 20 in the PCG paper (see link above).
@@ -329,40 +683,6 @@ update = |state| {
 
 	{ ..state, s: next_s }
 }
-
-## Step the random state forward by n steps. The sequence has a period of
-## 2 to the 32 steps, and will wrap around after that.
-step_forward : Random.State, U32 -> Random.State
-step_forward = |state, delta| {
-	var $acc_mult = 1.U32
-	var $acc_plus = 0.U32
-	var $cur_mult = default_u32_update_multiplier
-	var $cur_plus = state.update_increment
-	var $delta = delta
-
-	while $delta > 0 {
-		if $delta % 2 == 1 {
-			$acc_mult = mul_wrap_u32($acc_mult, $cur_mult)
-			$acc_plus = 
-				mul_wrap_u32($acc_plus, $cur_mult)
-					->add_wrap_u32($cur_plus)
-		}
-		$cur_plus = 
-			add_wrap_u32($cur_mult, 1)
-				->mul_wrap_u32($cur_plus)
-		$cur_mult = mul_wrap_u32($cur_mult, $cur_mult)
-		$delta = $delta // 2
-	}
-
-	next_s = 
-		mul_wrap_u32(state.s, $acc_mult)
-			->add_wrap_u32($acc_plus)
-
-	{ ..state, s: next_s }
-}
-
-step_backward : Random.State, U32 -> Random.State
-step_backward = |state, delta| step_forward(state, negate_wrap_u32(delta))
 
 # Common math helpers
 
@@ -378,42 +698,103 @@ add_wrap_u32 = |a, b| (a.to_u64() + b.to_u64()).to_u32_wrap()
 add_wrap_i32 : I32, I32 -> I32
 add_wrap_i32 = |a, b| (a.to_i64() + b.to_i64()).to_i32_wrap()
 
+add_wrap_u64 : U64, U64 -> U64
+add_wrap_u64 = |a, b| (a.to_u128() + b.to_u128()).to_u64_wrap()
+
+add_wrap_i64 : I64, I64 -> I64
+add_wrap_i64 = |a, b| (a.to_i128() + b.to_i128()).to_i64_wrap()
+
 mul_wrap_u32 : U32, U32 -> U32
 mul_wrap_u32 = |a, b| (a.to_u64() * b.to_u64()).to_u32_wrap()
 
 negate_wrap_u32 : U32 -> U32
-negate_wrap_u32 = |a| a.bitwise_not()->add_wrap_u32(1)
+negate_wrap_u32 = |a| a.bitwise_not() |> add_wrap_u32(1)
+
+negate_wrap_u64 : U64 -> U64
+negate_wrap_u64 = |a| a.bitwise_not() |> add_wrap_u64(1)
+
+step_down_f32 : F32 -> F32
+step_down_f32 = |a| {
+	if a.is_nan() or a == -(F32.infinity) {
+		return a
+	}
+
+	bits = if a.is_zero() {
+		# for positive zero or negative zero, return highest negative subnormal
+		0x8000_0000
+	} else if a.is_positive() {
+		# positive magnitude shrinks towards 0.0
+		# also brings F32.infinity down to F32.highest
+		F32.to_bits(a) - 1
+	} else {
+		# negative magnitude grows away from 0.0
+		# also brings F32.lowest to negative F32.infinity
+		F32.to_bits(a) + 1
+	}
+
+	F32.from_bits(bits)
+}
+
+step_down_f64 : F64 -> F64
+step_down_f64 = |a| {
+	if a.is_nan() or a == -(F64.infinity) {
+		return a
+	}
+
+	bits = if a.is_zero() {
+		# for positive zero or negative zero, return highest negative subnormal
+		0x8000_0000_0000_0000
+	} else if a.is_positive() {
+		# positive magnitude shrinks towards 0.0
+		# also brings F64.infinity down to F64.highest
+		F64.to_bits(a) - 1
+	} else {
+		# negative magnitude grows away from 0.0
+		# also brings F64.lowest to negative F64.infinity
+		F64.to_bits(a) + 1
+	}
+
+	F64.from_bits(bits)
+}
 
 # Tests
 
+test_passes_with_many_seeds : (U32 -> Bool) -> Bool
+test_passes_with_many_seeds = |test_predicate| {
+	var $all_passed = True
+
+	for seed_num in 0..<100 {
+		$all_passed = $all_passed and test_predicate(seed_num)
+	}
+
+	$all_passed
+}
+
 expect {
 	always_five = Random.static(5)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			rand_generation = Random.step(this_seed, always_five)
 
-			all_passed and rand_generation.value == 5
+			rand_generation.value == 5
 		},
 	)
 }
 
 expect {
-	doubled_int = Random.bounded_i32(-100, 100)->Random.map(|i| i * 2)
+	doubled_int = Random.bounded_i32(-100, 100) |> Random.map(|i| i * 2)
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			rand_generation = Random.step(this_seed, Random.bounded_i32(-100, 100))
 			doubled_rand_generation = Random.step(this_seed, doubled_int)
 			rand_int = rand_generation.value
 			doubled_rand_int = doubled_rand_generation.value
 
-			all_passed and rand_int * 2 == doubled_rand_int
+			rand_int * 2 == doubled_rand_int
 		},
 	)
 }
@@ -422,14 +803,13 @@ expect {
 	color_component_gen = Random.bounded_i32(0, 255)
 	rgb_generator = { r: color_component_gen, g: color_component_gen, b: color_component_gen }.Random
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
+	test_passes_with_many_seeds(
+		|seed_num| {
 			this_seed = Random.seed(seed_num)
 			{ value: color, .. } = Random.step(this_seed, rgb_generator)
 			{ r, g, b } = color
-			all_passed and r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255
+
+			r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255
 		},
 	)
 }
@@ -437,12 +817,15 @@ expect {
 # sanity check for non-bounded generators, checking for overflows/crashes etc
 expect {
 	unbounded_values = {
-		a: Random.u8,
-		b: Random.i8,
-		c: Random.u16,
-		d: Random.i16,
-		e: Random.u32,
-		f: Random.i32,
+		bool: Random.bool,
+		u8: Random.u8,
+		i8: Random.i8,
+		u16: Random.u16,
+		i16: Random.i16,
+		u32: Random.u32,
+		i32: Random.i32,
+		u64: Random.u64,
+		i64: Random.i64,
 	}.Random
 
 	test_seed = Random.seed(123)
@@ -452,108 +835,96 @@ expect {
 	True
 }
 
-expect {
-	ascending_bounded = Random.bounded_u8(90, 200)
-	descending_bounded = Random.bounded_u8(200, 90)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 90 and value_a <= 200 and value_a == value_b
-		},
-	)
+# bounds tests with random bounds
+
+make_bounded_generator_test = |bound_generator, make_bounded_generator| {
+	|seed_num| {
+		var $state = Random.seed(seed_num)
+
+		{ value: bound_a, state: $state } = Random.step($state, bound_generator)
+		{ value: bound_b, state: $state } = Random.step($state, bound_generator)
+
+		generator = make_bounded_generator(bound_a, bound_b)
+
+		{ value, .. } = Random.step($state, generator)
+
+		(lo, hi) = sort(bound_a, bound_b)
+
+		value >= lo and value <= hi
+	}
 }
 
 expect {
-	ascending_bounded = Random.bounded_u16(200, 33000)
-	descending_bounded = Random.bounded_u16(33000, 200)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 200 and value_a <= 33000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u8, Random.bounded_u8)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_u32(20_000_000, 30_000_000)
-	descending_bounded = Random.bounded_u32(30_000_000, 20_000_000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= 20_000_000 and value_a <= 30_000_000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u16, Random.bounded_u16)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i8(-100, 120)
-	descending_bounded = Random.bounded_i8(120, -100)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -100 and value_a <= 120 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u32, Random.bounded_u32)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i16(-1000, 1000)
-	descending_bounded = Random.bounded_i16(1000, -1000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -1000 and value_a <= 1000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.u64, Random.bounded_u64)
+	test_passes_with_many_seeds(test)
 }
 
 expect {
-	ascending_bounded = Random.bounded_i32(-40_000_000, 70_000_000)
-	descending_bounded = Random.bounded_i32(70_000_000, -40_000_000)
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			this_seed = Random.seed(seed_num)
-			{ value: value_a, .. } = Random.step(this_seed, ascending_bounded)
-			{ value: value_b, .. } = Random.step(this_seed, descending_bounded)
-			all_passed and value_a >= -40_000_000 and value_a <= 70_000_000 and value_a == value_b
-		},
-	)
+	test = make_bounded_generator_test(Random.i8, Random.bounded_i8)
+	test_passes_with_many_seeds(test)
 }
+
+expect {
+	test = make_bounded_generator_test(Random.i16, Random.bounded_i16)
+	test_passes_with_many_seeds(test)
+}
+
+expect {
+	test = make_bounded_generator_test(Random.i32, Random.bounded_i32)
+	test_passes_with_many_seeds(test)
+}
+
+expect {
+	test = make_bounded_generator_test(Random.i64, Random.bounded_i64)
+	test_passes_with_many_seeds(test)
+}
+
+# bounds tests with single number range
 
 expect {
 	u32_generator = Random.bounded_u32(42, 42)
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), u32_generator).value
+			actual == 42
+		},
+	)
+}
+
+expect {
 	i32_generator = Random.bounded_i32(-7, -7)
 
-	Iter.fold(
-		0..<100,
-		True,
-		|all_passed, seed_num| {
-			u32_actual = Random.step(Random.seed(seed_num), u32_generator).value
-			i32_actual = Random.step(Random.seed(seed_num), i32_generator).value
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), i32_generator).value
+			actual == -7
+		},
+	)
+}
 
-			all_passed and u32_actual == 42 and i32_actual == -7
+expect {
+	u32_generator = Random.bounded_u32(0, 0)
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			actual = Random.step(Random.seed(seed_num), u32_generator).value
+			actual == 0
 		},
 	)
 }
@@ -568,6 +939,56 @@ expect {
 	True
 }
 
+# test shuffle
+expect {
+	items = (0..<100).collect()
+	expected_sum = items.sum()
+
+	test_passes_with_many_seeds(
+		|seed_num| {
+			this_seed = Random.seed(seed_num)
+			{ value: shuffled_items, .. } =
+				Random.shuffle(items)(this_seed)
+			actual_sum = shuffled_items.sum()
+
+			actual_sum == expected_sum
+		},
+	)
+}
+
+# record builder and `Random.list` agree
+expect {
+	initial_state = Random.seed(33)
+
+	record_generator = {
+		n1: Random.u32,
+		n2: Random.u32,
+		n3: Random.u32,
+		n4: Random.u32,
+		n5: Random.u32,
+		n6: Random.u32,
+	}.Random
+
+	record = record_generator(initial_state)
+	{ n1, n2, n3, n4, n5, n6 } = record.value
+
+	list = Random.list(Random.u32, 6)(initial_state)
+
+	[n1, n2, n3, n4, n5, n6] == list.value and record.state == list.state
+}
+
+# Random.list same as multiple single value generators
+expect {
+	initial_state = Random.seed(5)
+
+	n1 = Random.u32(initial_state)
+	n2 = Random.u32(n1.state)
+
+	n_list_again = Random.list(Random.u32, 2)(initial_state)
+
+	n2.state == n_list_again.state
+}
+
 # "Known Answer Test" code ported from PCG C test from https://github.com/imneme/pcg-c
 # `test-low/check-base.c`
 pcg_c_known_answer_test_generator : Generator(Str)
@@ -576,7 +997,7 @@ pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str = |n| {
 		digits = (0..<32).step_by(4).rev().map(
 			|shift| {
-				nibble = n.shr_wrap(shift).bitwise_and(0xF).to_u8_wrap()
+				nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
 				if nibble < 10 {
 					nibble + '0'
 				} else {
@@ -621,21 +1042,21 @@ pcg_c_known_answer_test_generator = |state| {
 
 		lines = groups.map(
 			|group| {
-				group.map(|card| " ${card_to_str(card)}")->Str.join_with("")
+				group.map(|card| " ${card_to_str(card)}") |> Str.join_with("")
 			},
 		)
 
-		lines->Str.join_with("\n\t")
+		lines |> Str.join_with("\n\t")
 	}
 
 	test_round_to_str : TestRound, U64 -> Str
 	test_round_to_str = |round, index| {
 		{ u32_list, u32_list_again, coins, rolls, cards } = round
 
-		u32_list_str = u32_list.map(u32_to_hex_str)->Str.join_with(" ")
-		u32_list_again_str = u32_list_again.map(u32_to_hex_str)->Str.join_with(" ")
-		coins_str = coins.map(|n| if (n == 0) 'T' else 'H')->Str.from_utf8_lossy()
-		rolls_str = rolls.map(U32.to_str)->Str.join_with(" ")
+		u32_list_str = u32_list.map(u32_to_hex_str) |> Str.join_with(" ")
+		u32_list_again_str = u32_list_again.map(u32_to_hex_str) |> Str.join_with(" ")
+		coins_str = coins.map(|n| if (n == 0) 'T' else 'H') |> Str.from_utf8_lossy
+		rolls_str = rolls.map(U32.to_str) |> Str.join_with(" ")
 		cards_str = deck_to_str(cards)
 
 		# the missing space on the cards string is intentional to match
@@ -648,33 +1069,36 @@ pcg_c_known_answer_test_generator = |state| {
 		\\  Cards:${cards_str}
 	}
 
-	test_rounds = 
+	test_rounds =
 		Random.list(test_round_generator, 5)(state)
 
-	value = 
-		test_rounds.value.map_with_index(test_round_to_str)->Str.join_with("\n\n")
+	value =
+		test_rounds.value.map_with_index(test_round_to_str) |> Str.join_with("\n\n")
 
 	{ value, state: test_rounds.state }
 }
 
-shuffled_deck_generator : Generator(List(U32))
-shuffled_deck_generator = |state| {
-	var $state = state
-	var $deck = (0..<52).collect()
+# only included for parity with PCG-C known answer tests
+shuffle_with_u32 : List(a) -> Generator(List(a))
+shuffle_with_u32 = |items| {
+	|var $state| {
+		if items.len() < 2 return { value: items, state: $state }
 
-	for i in (1..<$deck.len()).rev() {
-		{ value: choice_i, state: $state } = 
-			Random.bounded_u32(0, i.to_u32_wrap())($state)
-		$deck = match $deck.swap(i, choice_i.to_u64()) {
-			Ok(l) => l
-			Err(OutOfBounds) => {
-				crash "error in `shuffled_deck_generator`"
-				[]
+		var $items = items
+		for i in (1..<items.len()).rev() {
+			{ value: choice_i, state: $state } =
+				Random.bounded_u32(0, i.to_u32_wrap())($state)
+			$items = match $items.swap(i, choice_i.to_u64()) {
+				Ok(l) => l
+				Err(OutOfBounds) => {
+					crash "error in `shuffle_with_u32`"
+					[]
+				}
 			}
 		}
-	}
 
-	{ value: $deck, state: $state }
+		{ value: $items, state: $state }
+	}
 }
 
 TestRound : {
@@ -686,25 +1110,24 @@ TestRound : {
 }
 
 test_round_generator : Generator(TestRound)
-test_round_generator = |state| {
-	var $state = state
-
-	{ value: u32_list, state: $state } = 
+test_round_generator = |var $state| {
+	{ value: u32_list, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
-	$state = $state->step_backward(6)
+	$state = $state.rewind(6)
 
-	{ value: u32_list_again, state: $state } = 
+	{ value: u32_list_again, state: $state } =
 		Random.list(Random.u32, 6)($state)
 
-	{ value: coins, state: $state } = 
+	{ value: coins, state: $state } =
 		Random.list(Random.bounded_u32(0, 1), 65)($state)
 
-	{ value: rolls, state: $state } = 
+	{ value: rolls, state: $state } =
 		Random.list(Random.bounded_u32(1, 6), 33)($state)
 
-	{ value: cards, state: $state } = 
-		shuffled_deck_generator($state)
+	random_deck = shuffle_with_u32((0..<52).collect())
+	{ value: cards, state: $state } =
+		random_deck($state)
 
 	{
 		value: { u32_list, u32_list_again, coins, rolls, cards },
@@ -718,7 +1141,7 @@ expect {
 
 	actual = pcg_c_known_answer_test_generator(state)
 
-	expected = 
+	expected =
 		\\Round 1:
 		\\  32bit: 0x256b5357 0xa5efad32 0x170b7830 0x334a5b22 0x3de5c680 0x9b47b7b3
 		\\  Again: 0x256b5357 0xa5efad32 0x170b7830 0x334a5b22 0x3de5c680 0x9b47b7b3
@@ -773,7 +1196,7 @@ expect {
 
 	actual = pcg_c_known_answer_test_generator(state)
 
-	expected = 
+	expected =
 		\\Round 1:
 		\\  32bit: 0xf84b622d 0xdc1e5bb4 0x74fb8ac1 0xb3bbf8de 0x9cf62074 0x2d2f5e33
 		\\  Again: 0xf84b622d 0xdc1e5bb4 0x74fb8ac1 0xb3bbf8de 0x9cf62074 0x2d2f5e33
@@ -827,7 +1250,7 @@ expect {
 	initial_state = Random.seed(42)
 	n = Random.u32(initial_state)
 
-	actual = initial_state->step_forward(1)
+	actual = initial_state.fast_forward(1)
 	expected = n.state
 
 	actual == expected
@@ -837,7 +1260,7 @@ expect {
 expect {
 	initial_state = Random.seed(42)
 
-	initial_state->step_backward(1) == initial_state->step_forward(U32.highest)
+	initial_state.rewind(1) == initial_state.fast_forward(U32.highest)
 }
 
 # repeat after backwards step
@@ -845,7 +1268,7 @@ expect {
 	initial_state = Random.seed(11)
 
 	n1 = Random.u32(initial_state)
-	n2 = Random.u32(n1.state->step_backward(1))
+	n2 = Random.u32(n1.state.rewind(1))
 
 	n1 == n2
 }
@@ -854,62 +1277,10 @@ expect {
 	var $state = Random.seed(11)
 
 	{ value: n1, state: $state } = Random.u32($state)
-	$state = $state->step_backward(1)
+	$state = $state.rewind(1)
 	{ value: n2, state: $state } = Random.u32($state)
 
 	n1 == n2
-}
-
-# record generator and list agree on values
-expect {
-	initial_state = Random.seed(33)
-
-	record_generator = {
-		n1: Random.u32,
-		n2: Random.u32,
-		n3: Random.u32,
-		n4: Random.u32,
-		n5: Random.u32,
-		n6: Random.u32,
-	}.Random
-
-	record = record_generator(initial_state)
-	{ n1, n2, n3, n4, n5, n6 } = record.value
-
-	list = Random.list(Random.u32, 6)(initial_state)
-
-	[n1, n2, n3, n4, n5, n6] == list.value
-}
-
-# record generator and list agree on state
-expect {
-	initial_state = Random.seed(33)
-
-	record_generator = {
-		n1: Random.u32,
-		n2: Random.u32,
-		n3: Random.u32,
-		n4: Random.u32,
-		n5: Random.u32,
-		n6: Random.u32,
-	}.Random
-
-	record = record_generator(initial_state)
-	list = Random.list(Random.u32, 6)(initial_state)
-
-	record.state == list.state
-}
-
-# Random.list same as multiple single value generators
-expect {
-	initial_state = Random.seed(5)
-
-	n1 = Random.u32(initial_state)
-	n2 = Random.u32(n1.state)
-
-	n_list_again = Random.list(Random.u32, 2)(initial_state)
-
-	n2.state == n_list_again.state
 }
 
 # step backward even delta
@@ -918,7 +1289,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums_again = Random.list(Random.u32, 2)(nums.state->step_backward(2))
+	nums_again = Random.list(Random.u32, 2)(nums.state.rewind(2))
 
 	nums == nums_again
 }
@@ -929,7 +1300,7 @@ expect {
 
 	nums = Random.list(Random.u32, 2)(initial_state)
 
-	nums.state == initial_state->step_forward(2)
+	nums.state == initial_state.fast_forward(2)
 }
 
 # step forward with odd delta
@@ -938,17 +1309,202 @@ expect {
 
 	nums = Random.list(Random.u32, 3)(initial_state)
 
-	nums.state == initial_state->step_forward(3)
+	nums.state == initial_state.fast_forward(3)
 }
 
 expect {
 	state = Random.seed(0)
 
 	same_state = state
-		->step_forward(1)
-		->step_forward(1)
-		->step_forward(2)
-		->step_backward(4)
+		.fast_forward(1)
+		.fast_forward(1)
+		.fast_forward(2)
+		.rewind(4)
 
 	same_state == state
 }
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = -999
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = 1000
+			hi = 1001
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = 5000
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -0.1
+			hi = 0.2
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = -999
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = 1000
+			hi = 1001
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -1000
+			hi = 5000
+			{ value, .. } = Random.step(Random.seed(s), Random.f64(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+expect {
+	test_passes_with_many_seeds(
+		|s| {
+			lo = -0.1
+			hi = 0.2
+			{ value, .. } = Random.step(Random.seed(s), Random.f32(lo, hi))
+			value >= lo and value < hi
+		},
+	)
+}
+
+# Random.choice all choices eventually encountered
+expect {
+	choice_generator = Random.choice(A, [B, C])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_try all choices eventually encountered
+expect {
+	choice_generator = Random.choice_try([A, B, C])?
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_weighted with very unlikely choice
+# Not a fool-proof test but if it fails you should probably go buy a lottery ticket
+expect {
+	choice_generator = Random.choice_weighted((A, 0.0000000001), [(B, 1000000000), (C, 1000000000)])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	$encountered_choices.contains(A) == False and
+		$encountered_choices.contains(B) and
+			$encountered_choices.contains(C)
+}
+
+# Random.choice_weighted with even weights
+expect {
+	choice_generator = Random.choice_weighted((A, 1), [(B, 1), (C, 1)])
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+# Random.choice_weighted_try with even weights
+expect {
+	choice_generator = Random.choice_weighted_try([(A, 1), (B, 1), (C, 1)])?
+	var $state = Random.seed(0)
+	var $encountered_choices = Set.empty()
+	for _ in 0..<100 {
+		{ value: choice, state: $state } = choice_generator($state)
+		$encountered_choices = $encountered_choices.insert(choice)
+	}
+
+	[A, B, C].all(|choice| $encountered_choices.contains(choice))
+}
+
+expect {
+	state = Random.seed(0)
+	generator = Random.chain(
+		Random.static(3),
+		|count| {
+			Random.list(Random.static(4), count)
+		},
+	)
+
+	{ value, .. } = generator(state)
+	value == [4, 4, 4]
+}
+
+expect step_down_f32(0.0) == F32.from_bits(0x8000_0000)
+expect step_down_f32(F32.infinity) == F32.highest
+expect step_down_f32(-(F32.infinity)) == -(F32.infinity)
+expect step_down_f32(F32.lowest) == -(F32.infinity)
+expect step_down_f32(F32.nan).is_nan()
+expect step_down_f32(1.0) < 1.0
+expect step_down_f32(-1.0) < -1.0
+
+expect step_down_f64(0.0) == F64.from_bits(0x8000_0000_0000_0000)
+expect step_down_f64(F64.infinity) == F64.highest
+expect step_down_f64(-(F64.infinity)) == -(F64.infinity)
+expect step_down_f64(F64.lowest) == -(F64.infinity)
+expect step_down_f64(F64.nan).is_nan()
+expect step_down_f64(1.0) < 1.0
+expect step_down_f64(-1.0) < -1.0
