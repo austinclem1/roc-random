@@ -194,7 +194,7 @@ Random := [].{
 			if items.len() < 2 return { value: items, state: $state }
 
 			var $items = items
-			for i in (1..<items.len()).rev() {
+			for i in List.from_iter(1..<items.len()).rev() {
 				{ value: choice_i, state: $state } =
 					bounded_u64(0, i)($state)
 				$items = match $items.swap(i, choice_i) {
@@ -275,6 +275,7 @@ Random := [].{
 	## A `Generator` for the full range of 64-bit unsigned integers
 	u64 : Generator(U64)
 	u64 = {
+		component_generator : Generator({ hi : U32, lo : U32 })
 		component_generator = {
 			hi: u32,
 			lo: u32,
@@ -284,8 +285,7 @@ Random := [].{
 			|> map(
 				|{ hi, lo }| {
 					hi_shifted = hi.to_u64().shl_wrap(32)
-
-					(hi_shifted).bitwise_or(lo.to_u64())
+					hi_shifted.bitwise_or(lo.to_u64())
 				},
 			)
 	}
@@ -995,16 +995,21 @@ pcg_c_known_answer_test_generator : Generator(Str)
 pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str : U32 -> Str
 	u32_to_hex_str = |n| {
-		digits = (0..<32).step_by(4).rev().map(
-			|shift| {
-				nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
-				if nibble < 10 {
-					nibble + '0'
-				} else {
-					(nibble - 10) + 'a'
-				}
-			},
-		).collect()
+		digits =
+			(0..<32)
+				.step_by(4)
+				|> List.from_iter
+				.rev()
+				.map(
+					|shift| {
+						nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
+						if nibble < 10 {
+							nibble + '0'
+						} else {
+							(nibble - 10) + 'a'
+						}
+					},
+				)
 		"0x${Str.from_utf8_lossy(digits)}"
 	}
 
@@ -1085,7 +1090,7 @@ shuffle_with_u32 = |items| {
 		if items.len() < 2 return { value: items, state: $state }
 
 		var $items = items
-		for i in (1..<items.len()).rev() {
+		for i in List.from_iter(1..<items.len()).rev() {
 			{ value: choice_i, state: $state } =
 				Random.bounded_u32(0, i.to_u32_wrap())($state)
 			$items = match $items.swap(i, choice_i.to_u64()) {
