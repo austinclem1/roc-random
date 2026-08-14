@@ -68,6 +68,13 @@ jobs:
             echo "skip=$skip"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Install Roc
+        if: steps.nightly.outputs.skip == ''
+        uses: roc-lang/setup-roc@f5a74bf90aa694b43ab4a7cbfdb19273bc6aa697
+        with:
+          version: nightly-new-compiler
+          nightly-tag: ${{ steps.nightly.outputs.version }}
+
       - name: Open bump PR
         if: steps.nightly.outputs.skip == ''
         env:
@@ -78,6 +85,9 @@ jobs:
           set -euo pipefail
 
           python3 scripts/update_roc_version.py --version "$VERSION"
+          # A new nightly can change what the formatter wants, so carry any
+          # reformatting into the PR rather than leaving it to fail there.
+          roc fmt package examples
           if git diff --quiet; then
             echo "Nothing to commit." >> "$GITHUB_STEP_SUMMARY"
             exit 0
