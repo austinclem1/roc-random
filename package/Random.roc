@@ -102,7 +102,9 @@ Random := [].{
 
 		var $seed = State.({ s: 0, update_increment })
 		$seed = $seed |> update
-		$seed = { ..$seed, s: $seed.s + initial_seed }
+		# Wrap on overflow like the rest of the PCG arithmetic; a plain `+` here
+		# panicked for large seeds (e.g. `U32.highest`). (#66)
+		$seed = { ..$seed, s: add_wrap_u32($seed.s, initial_seed) }
 		$seed |> update
 	}
 
@@ -783,6 +785,15 @@ expect {
 			rand_generation.value == 5
 		},
 	)
+}
+
+# Regression test for #66: seeding with a large value used to panic with an
+# integer addition overflow inside `seed_variant`.
+expect {
+	this_seed = Random.seed(U32.highest)
+	rand_generation = Random.step(this_seed, Random.static(5))
+
+	rand_generation.value == 5
 }
 
 expect {
