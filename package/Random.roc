@@ -176,10 +176,12 @@ Random := [].{
 	list = |generator, length| {
 		|var $state| {
 			var $result = List.with_capacity(length)
+			var $remaining = length
 
-			for _ in 0..<length {
+			while $remaining > 0 {
 				{ value: item, state: $state } = generator($state)
 				$result = $result.append(item)
+				$remaining = $remaining - 1
 			}
 
 			{ value: $result, state: $state }
@@ -196,7 +198,7 @@ Random := [].{
 			if items.len() < 2 return { value: items, state: $state }
 
 			var $items = items
-			for i in List.from_iter(1..<items.len()).rev() {
+			for i in (1..<items.len()).iter_rev() {
 				{ value: choice_i, state: $state } =
 					bounded_u64(0, i)($state)
 				$items = match $items.swap(i, choice_i) {
@@ -765,7 +767,7 @@ test_passes_with_many_seeds : (U32 -> Bool) -> Bool
 test_passes_with_many_seeds = |test_predicate| {
 	var $all_passed = True
 
-	for seed_num in 0..<100 {
+	for seed_num in 0.U32..<100 {
 		$all_passed = $all_passed and test_predicate(seed_num)
 	}
 
@@ -952,7 +954,7 @@ expect {
 
 # test shuffle
 expect {
-	items = (0..<100).collect()
+	items = (0..<100).iter().collect()
 	expected_sum = items.sum()
 
 	test_passes_with_many_seeds(
@@ -1006,21 +1008,16 @@ pcg_c_known_answer_test_generator : Generator(Str)
 pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str : U32 -> Str
 	u32_to_hex_str = |n| {
-		digits =
-			(0..<32)
-				.step_by(4)
-				|> List.from_iter
-				.rev()
-				.map(
-					|shift| {
-						nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
-						if nibble < 10 {
-							nibble + '0'
-						} else {
-							(nibble - 10) + 'a'
-						}
-					},
-				)
+		digits = [28.U8, 24, 20, 16, 12, 8, 4, 0].iter().map(
+			|shift| {
+				nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
+				if nibble < 10 {
+					nibble + '0'
+				} else {
+					(nibble - 10) + 'a'
+				}
+			},
+		).collect()
 		"0x${Str.from_utf8_lossy(digits)}"
 	}
 
@@ -1101,7 +1098,7 @@ shuffle_with_u32 = |items| {
 		if items.len() < 2 return { value: items, state: $state }
 
 		var $items = items
-		for i in List.from_iter(1..<items.len()).rev() {
+		for i in (1..<items.len()).iter_rev() {
 			{ value: choice_i, state: $state } =
 				Random.bounded_u32(0, i.to_u32_wrap())($state)
 			$items = match $items.swap(i, choice_i.to_u64()) {
@@ -1141,7 +1138,7 @@ test_round_generator = |var $state| {
 	{ value: rolls, state: $state } =
 		Random.list(Random.bounded_u32(1, 6), 33)($state)
 
-	random_deck = shuffle_with_u32((0..<52).collect())
+	random_deck = shuffle_with_u32((0.U32..<52).iter().collect())
 	{ value: cards, state: $state } =
 		random_deck($state)
 
