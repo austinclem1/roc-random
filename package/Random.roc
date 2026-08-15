@@ -175,7 +175,7 @@ Random := [].{
 		|var $state| {
 			var $result = List.with_capacity(length)
 
-			for _ in 0..<length {
+			for _ in (0).range_exclusive_to(length) {
 				{ value: item, state: $state } = generator($state)
 				$result = $result.append(item)
 			}
@@ -194,7 +194,7 @@ Random := [].{
 			if items.len() < 2 return { value: items, state: $state }
 
 			var $items = items
-			for i in (1..<items.len()).iter_rev() {
+			for i in (1).range_exclusive_to(items.len()).iter_rev() {
 				{ value: choice_i, state: $state } =
 					bounded_u64(0, i)($state)
 				$items = match $items.swap(i, choice_i) {
@@ -763,7 +763,7 @@ test_passes_with_many_seeds : (U32 -> Bool) -> Bool
 test_passes_with_many_seeds = |test_predicate| {
 	var $all_passed = True
 
-	for seed_num in 0..<100 {
+	for seed_num in (0.U32).range_exclusive_to(100) {
 		$all_passed = $all_passed and test_predicate(seed_num)
 	}
 
@@ -941,7 +941,7 @@ expect {
 
 # test shuffle
 expect {
-	items = (0..<100).iter().collect()
+	items = (0).range_exclusive_to(100).iter().collect()
 	expected_sum = items.sum()
 
 	test_passes_with_many_seeds(
@@ -995,7 +995,7 @@ pcg_c_known_answer_test_generator : Generator(Str)
 pcg_c_known_answer_test_generator = |state| {
 	u32_to_hex_str : U32 -> Str
 	u32_to_hex_str = |n| {
-		digits = (0..=28).iter_rev().step_by(4).map(
+		digits = [28.U8, 24, 20, 16, 12, 8, 4, 0].iter().map(
 			|shift| {
 				nibble = n.shr_zf_wrap(shift).bitwise_and(0xF).to_u8_wrap()
 				if nibble < 10 {
@@ -1085,7 +1085,7 @@ shuffle_with_u32 = |items| {
 		if items.len() < 2 return { value: items, state: $state }
 
 		var $items = items
-		for i in (1..<items.len()).iter_rev() {
+		for i in (1).range_exclusive_to(items.len()).iter_rev() {
 			{ value: choice_i, state: $state } =
 				Random.bounded_u32(0, i.to_u32_wrap())($state)
 			$items = match $items.swap(i, choice_i.to_u64()) {
@@ -1125,7 +1125,7 @@ test_round_generator = |var $state| {
 	{ value: rolls, state: $state } =
 		Random.list(Random.bounded_u32(1, 6), 33)($state)
 
-	random_deck = shuffle_with_u32((0..<52).iter().collect())
+	random_deck = shuffle_with_u32((0.U32).range_exclusive_to(52).iter().collect())
 	{ value: cards, state: $state } =
 		random_deck($state)
 
@@ -1417,7 +1417,7 @@ expect {
 	choice_generator = Random.choice(A, [B, C])
 	var $state = Random.seed(0)
 	var $encountered_choices = Set.empty()
-	for _ in 0..<100 {
+	for _ in (0).range_exclusive_to(100) {
 		{ value: choice, state: $state } = choice_generator($state)
 		$encountered_choices = $encountered_choices.insert(choice)
 	}
@@ -1430,7 +1430,7 @@ expect {
 	choice_generator = Random.choice_try([A, B, C])?
 	var $state = Random.seed(0)
 	var $encountered_choices = Set.empty()
-	for _ in 0..<100 {
+	for _ in (0).range_exclusive_to(100) {
 		{ value: choice, state: $state } = choice_generator($state)
 		$encountered_choices = $encountered_choices.insert(choice)
 	}
@@ -1444,7 +1444,7 @@ expect {
 	choice_generator = Random.choice_weighted((A, 0.0000000001), [(B, 1000000000), (C, 1000000000)])
 	var $state = Random.seed(0)
 	var $encountered_choices = Set.empty()
-	for _ in 0..<100 {
+	for _ in (0).range_exclusive_to(100) {
 		{ value: choice, state: $state } = choice_generator($state)
 		$encountered_choices = $encountered_choices.insert(choice)
 	}
@@ -1459,7 +1459,7 @@ expect {
 	choice_generator = Random.choice_weighted((A, 1), [(B, 1), (C, 1)])
 	var $state = Random.seed(0)
 	var $encountered_choices = Set.empty()
-	for _ in 0..<100 {
+	for _ in (0).range_exclusive_to(100) {
 		{ value: choice, state: $state } = choice_generator($state)
 		$encountered_choices = $encountered_choices.insert(choice)
 	}
@@ -1472,7 +1472,7 @@ expect {
 	choice_generator = Random.choice_weighted_try([(A, 1), (B, 1), (C, 1)])?
 	var $state = Random.seed(0)
 	var $encountered_choices = Set.empty()
-	for _ in 0..<100 {
+	for _ in (0).range_exclusive_to(100) {
 		{ value: choice, state: $state } = choice_generator($state)
 		$encountered_choices = $encountered_choices.insert(choice)
 	}
