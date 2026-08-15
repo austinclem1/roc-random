@@ -174,10 +174,12 @@ Random := [].{
 	list = |generator, length| {
 		|var $state| {
 			var $result = List.with_capacity(length)
+			var $remaining = length
 
-			for _ in 0..<length {
+			while $remaining > 0 {
 				{ value: item, state: $state } = generator($state)
 				$result = $result.append(item)
+				$remaining = $remaining - 1
 			}
 
 			{ value: $result, state: $state }
